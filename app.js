@@ -309,10 +309,8 @@ async function loadStats() {
             );
         }
 
-        setText(
-            "total-cards",
-            data.stats.cards ?? 0
-        );
+        // "total-cards" is the global card catalog count.
+        // User-owned total is handled separately by loadCollection().
 
     } catch (error) {
         console.error("Stats API:", error);
