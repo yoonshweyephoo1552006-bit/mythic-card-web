@@ -22,7 +22,7 @@ CARDS_DIR = BASE_DIR / "assets" / "cards"
 load_dotenv(BASE_DIR / ".env")
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
-MYTHIC_WEBAPP_URL = "https://mythic-card-production.up.railway.app"
+MYTHIC_WEBAPP_URL = "https://yoonshweyephoo1552006-bit.github.io/mythic-card-web/"
 OWNER_ID_RAW = os.getenv("OWNER_ID", "").strip()
 
 try:
