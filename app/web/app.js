@@ -1,4 +1,4 @@
-const API_BASE = 'https://mythic-card-production.up.railway.app';
+const API_BASE = 'https://mythic-card-web-production.up.railway.app';
 const tg = window.Telegram?.WebApp;
 const ASSET_BASE = 'https://yoonshweyephoo1552006-bit.github.io/mythic-card-web/';
 
