@@ -21,6 +21,37 @@ except Exception:
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 
 
+
+def init_db():
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+    with sqlite3.connect(DB_PATH) as db:
+        db.execute("PRAGMA foreign_keys = ON")
+
+        schema_path = BASE_DIR / "database" / "schema.sql"
+        if schema_path.exists():
+            db.executescript(
+                schema_path.read_text(encoding="utf-8")
+            )
+
+        card_image = BASE_DIR / "assets" / "cards" / "legendary" / "CARD-0001.jpg"
+
+        if card_image.exists():
+            db.execute("""
+                INSERT OR IGNORE INTO cards
+                (card_code, name, rarity, image_path, is_active)
+                VALUES (?, ?, ?, ?, ?)
+            """, (
+                "CARD-0001",
+                "Card #0001",
+                "legendary",
+                "assets/cards/legendary/CARD-0001.jpg",
+                1
+            ))
+
+        db.commit()
+
+
 def get_db():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     db = sqlite3.connect(DB_PATH)
@@ -879,6 +910,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
+    init_db()
     host = "0.0.0.0"
     port = int(os.getenv("PORT", "8080"))
 
