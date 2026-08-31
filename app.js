@@ -1,5 +1,6 @@
 const API_BASE = 'https://mythic-card-production.up.railway.app';
 const tg = window.Telegram?.WebApp;
+const ASSET_BASE = 'https://yoonshweyephoo1552006-bit.github.io/mythic-card-web/';
 
 if (tg) {
     tg.ready();
@@ -149,7 +150,7 @@ function renderDrop(drop) {
     if (frameEl) {
         if (drop.image_path) {
             frameEl.innerHTML =
-                `<img src="/${drop.image_path}" alt="Card">`;
+                `<img src="${ASSET_BASE}${drop.image_path}" alt="Card">`;
         } else {
             frameEl.innerHTML =
                 '<div class="card-placeholder">🃏</div>';
@@ -456,7 +457,7 @@ async function loadCollection() {
             item.className = "collection-item";
 
             const image = card.image_path
-                ? `<img src="/${card.image_path}" alt="">`
+                ? `<img src="${ASSET_BASE}${card.image_path}" alt="">`
                 : `<div class="collection-placeholder">🃏</div>`;
 
             item.innerHTML = `
