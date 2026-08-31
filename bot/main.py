@@ -501,6 +501,12 @@ def owner_keyboard():
             [InlineKeyboardButton(status, callback_data="owner_toggle_bot")],
             [
                 InlineKeyboardButton(
+                    "🎴 OPEN MYTHIC CARD",
+                    web_app=WebAppInfo(url=MYTHIC_WEBAPP_URL),
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     "📤 UPLOAD CARD",
                     callback_data="owner_upload_card",
                 )
