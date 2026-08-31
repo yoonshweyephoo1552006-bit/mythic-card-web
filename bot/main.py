@@ -1,6 +1,7 @@
 import os
 import sqlite3
 import random
+import httpx
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -23,6 +24,7 @@ load_dotenv(BASE_DIR / ".env")
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 MYTHIC_WEBAPP_URL = "https://yoonshweyephoo1552006-bit.github.io/mythic-card-web/"
+MYTHIC_API_URL = "https://mythic-card-web-production.up.railway.app"
 OWNER_ID_RAW = os.getenv("OWNER_ID", "").strip()
 
 try:
@@ -1210,21 +1212,53 @@ async def owner_callback(
             else "mythic"
         )
 
-        drop = create_owner_drop(rarity)
+        await query.answer("⏳ Creating Web drop...")
 
-        if not drop:
-            await query.answer(
-                f"❌ No active {rarity} cards available.",
-                show_alert=True,
+        try:
+            async with httpx.AsyncClient(timeout=20) as client:
+                response = await client.post(
+                    f"{MYTHIC_API_URL}/api/admin/drop",
+                    json={
+                        "telegram_id": user.id,
+                        "rarity": rarity,
+                    },
+                )
+
+            data = response.json()
+
+            if not data.get("ok"):
+                error = data.get("error", "Unknown error")
+
+                if response.status_code == 409:
+                    await query.message.reply_text(
+                        f"⚠️ {rarity.upper()} DROP NOT CREATED\n\n"
+                        "🎴 An active drop already exists for this card.\n"
+                        "🌐 Check the Web App for the current drop."
+                    )
+                else:
+                    await query.message.reply_text(
+                        f"❌ {rarity.upper()} DROP FAILED\\n\\n"
+                        f"Reason: {error}"
+                    )
+                return
+
+            drop = data.get("drop") or {}
+
+            await query.message.reply_text(
+                f"✅ {rarity.upper()} DROP CREATED!\n\n"
+                f"🎴 {drop.get('name', 'Unknown Card')}\n"
+                f"🏷️ {rarity.upper()}\n"
+                f"🌐 Card is now live in the Web App.\n"
+                f"🎯 Players can catch it from the Web App."
             )
-            return
 
-        await send_drop(context, drop)
+        except Exception as exc:
+            print(f"❌ WEB DROP API ERROR: {exc}")
+            await query.message.reply_text(
+                f"❌ {rarity.upper()} DROP FAILED\n\n"
+                "⚠️ Web server could not be reached."
+            )
 
-        await query.answer(
-            f"✅ {rarity.upper()} drop sent!",
-            show_alert=True,
-        )
         return
 
     if query.data == "owner_start_event":
