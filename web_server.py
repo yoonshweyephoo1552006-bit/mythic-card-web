@@ -495,18 +495,27 @@ class Handler(BaseHTTPRequestHandler):
 
     def _get_authenticated_user(self):
         """
-        Read Telegram initData from ?initData=...
-        and return the local DB user.
+        Authenticate the Telegram Web App user.
+
+        Prefer X-Telegram-Init-Data header.
+        Keep ?initData=... as fallback.
         """
-        query = parse_qsl(
-            urlparse(self.path).query,
-            keep_blank_values=True
+        init_data = self.headers.get(
+            "X-Telegram-Init-Data",
+            ""
+        ).strip()
+
+        if not init_data:
+            query = parse_qsl(
+                urlparse(self.path).query,
+                keep_blank_values=True
+            )
+            params = dict(query)
+            init_data = params.get("initData", "").strip()
+
+        telegram_user, error = self.verify_telegram_init_data(
+            init_data
         )
-
-        params = dict(query)
-        init_data = params.get("initData", "")
-
-        telegram_user, error = self.verify_telegram_init_data(init_data)
 
         if error:
             return None, error

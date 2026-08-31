@@ -474,7 +474,12 @@ async function loadCollection() {
             list.appendChild(item);
         }
 
-        setText("total-owned", cards.length);
+        const totalOwned = cards.reduce(
+            (sum, card) => sum + Number(card.quantity || 0),
+            0
+        );
+
+        setText("total-owned", totalOwned);
 
     } catch (error) {
         console.error("Collection API:", error);
