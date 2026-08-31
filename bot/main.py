@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, WebAppInfo
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -22,6 +22,7 @@ CARDS_DIR = BASE_DIR / "assets" / "cards"
 load_dotenv(BASE_DIR / ".env")
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
+MYTHIC_WEBAPP_URL = "https://mythic-card-production.up.railway.app"
 OWNER_ID_RAW = os.getenv("OWNER_ID", "").strip()
 
 try:
@@ -592,10 +593,22 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    keyboard = InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "🎴 OPEN MYTHIC CARD",
+                    web_app=WebAppInfo(url=MYTHIC_WEBAPP_URL),
+                )
+            ]
+        ]
+    )
+
     await update.message.reply_text(
         "🃏 MYTHIC CARD\n\n"
         "🟢 The bot is online.\n"
-        "Mini App access will be connected next."
+        "👇 Tap below to open the game.",
+        reply_markup=keyboard,
     )
 
 
