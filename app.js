@@ -445,6 +445,7 @@ async function loadCollection() {
 
         if (!cards.length) {
             if (empty) empty.style.display = "block";
+            setText("total-cards", 0);
             return;
         }
 
@@ -477,7 +478,7 @@ async function loadCollection() {
             0
         );
 
-        setText("total-owned", totalOwned);
+        setText("total-cards", totalOwned);
 
     } catch (error) {
         console.error("Collection API:", error);
