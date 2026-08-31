@@ -10,3 +10,6 @@ web_server.pid
 *.pid
 *.log
 database/*.db
+*.step*
+*.patch
+database/step12_pool.sql
