@@ -55,6 +55,26 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
 
+    def seed_test_card(self):
+        with get_db() as db:
+            db.execute("""
+                INSERT OR IGNORE INTO cards
+                (card_code, name, rarity, image_path, is_active)
+                VALUES (?, ?, ?, ?, ?)
+            """, (
+                "CARD-0001",
+                "Card #0001",
+                "legendary",
+                "assets/cards/legendary/CARD-0001.jpg",
+                1
+            ))
+            db.commit()
+
+        return json_response(self, {
+            "ok": True,
+            "message": "Test card seeded"
+        })
+
     def do_GET(self):
         path = urlparse(self.path).path
 
@@ -63,6 +83,9 @@ class Handler(BaseHTTPRequestHandler):
                 "ok": True,
                 "service": "MYTHIC CARD WEB API"
             })
+
+        if path == "/api/seed-test-card":
+            return self.seed_test_card()
 
         if path == "/api/cards":
             return self.cards()
