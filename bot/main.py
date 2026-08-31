@@ -1219,7 +1219,7 @@ async def owner_callback(
                 response = await client.post(
                     f"{MYTHIC_API_URL}/api/admin/drop",
                     json={
-                        "telegram_id": user.id,
+                        "telegram_id": update.effective_user.id,
                         "rarity": rarity,
                     },
                 )
@@ -1253,10 +1253,13 @@ async def owner_callback(
             )
 
         except Exception as exc:
-            print(f"❌ WEB DROP API ERROR: {exc}")
+            print(
+                f"❌ WEB DROP API ERROR: {type(exc).__name__}: {exc}",
+                flush=True,
+            )
             await query.message.reply_text(
                 f"❌ {rarity.upper()} DROP FAILED\n\n"
-                "⚠️ Web server could not be reached."
+                f"⚠️ {type(exc).__name__}: {exc}"
             )
 
         return
@@ -1317,13 +1320,8 @@ def main():
         )
     )
 
-    if application.job_queue:
-        application.job_queue.run_repeating(
-            drop_job,
-            interval=DROP_INTERVAL_HOURS * 60 * 60,
-            first=10,
-            name="mythic-card-drop",
-        )
+    # Automatic local drops are disabled.
+    # Drops are now created by the Web backend through the owner panel.
 
     print("🤖 MYTHIC CARD BOT STARTING...")
     print(f"👑 OWNER ID: {OWNER_ID}")
