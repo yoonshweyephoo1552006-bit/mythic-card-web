@@ -3,7 +3,7 @@ import sqlite3
 import os
 import hmac
 import hashlib
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qsl
@@ -19,6 +19,7 @@ except Exception:
     pass
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
+OWNER_ID = int(os.getenv("OWNER_ID", "0") or "0")
 
 
 
@@ -168,6 +169,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/catch":
             return self.catch_card()
 
+        if path == "/api/admin/drop":
+            return self.admin_drop()
+
         if path == "/api/premium/request":
             return self.premium_request()
 
@@ -175,6 +179,120 @@ class Handler(BaseHTTPRequestHandler):
             "ok": False,
             "error": "Not found"
         }, 404)
+
+
+    def admin_drop(self):
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+
+            if length <= 0 or length > 10_000:
+                return json_response(self, {
+                    "ok": False,
+                    "error": "Invalid request body"
+                }, 400)
+
+            payload = json.loads(
+                self.rfile.read(length).decode("utf-8")
+            )
+
+            telegram_id = int(payload.get("telegram_id", 0))
+            rarity = str(payload.get("rarity", "")).lower().strip()
+
+            if telegram_id != OWNER_ID:
+                return json_response(self, {
+                    "ok": False,
+                    "error": "Owner authorization required"
+                }, 403)
+
+            if rarity not in ("legendary", "mythic"):
+                return json_response(self, {
+                    "ok": False,
+                    "error": "Invalid rarity"
+                }, 400)
+
+            now = datetime.now(timezone.utc)
+            expires = now + timedelta(minutes=10)
+
+            with get_db() as db:
+                db.execute(
+                    """
+                    UPDATE drops
+                    SET status = 'expired'
+                    WHERE status = 'active'
+                      AND expires_at <= ?
+                    """,
+                    (now.isoformat(),)
+                )
+
+                card = db.execute(
+                    """
+                    SELECT id, card_code, name, rarity, image_path
+                    FROM cards
+                    WHERE is_active = 1
+                      AND rarity = ?
+                    ORDER BY RANDOM()
+                    LIMIT 1
+                    """,
+                    (rarity,)
+                ).fetchone()
+
+                if not card:
+                    return json_response(self, {
+                        "ok": False,
+                        "error": f"No active {rarity} cards available"
+                    }, 404)
+
+                active = db.execute(
+                    """
+                    SELECT id
+                    FROM drops
+                    WHERE card_id = ?
+                      AND status = 'active'
+                    LIMIT 1
+                    """,
+                    (card["id"],)
+                ).fetchone()
+
+                if active:
+                    return json_response(self, {
+                        "ok": False,
+                        "error": "This card already has an active drop"
+                    }, 409)
+
+                cur = db.execute(
+                    """
+                    INSERT INTO drops
+                        (card_id, started_at, expires_at, status)
+                    VALUES (?, ?, ?, 'active')
+                    """,
+                    (
+                        card["id"],
+                        now.isoformat(),
+                        expires.isoformat(),
+                    )
+                )
+
+                drop_id = cur.lastrowid
+
+            return json_response(self, {
+                "ok": True,
+                "drop": {
+                    "id": drop_id,
+                    "card_id": card["id"],
+                    "card_code": card["card_code"],
+                    "name": card["name"],
+                    "rarity": card["rarity"],
+                    "image_path": card["image_path"],
+                    "expires_at": expires.isoformat()
+                }
+            }, 201)
+
+        except Exception as exc:
+            print("[ADMIN DROP ERROR]", repr(exc))
+            return json_response(self, {
+                "ok": False,
+                "error": str(exc)
+            }, 500)
 
 
     def verify_telegram_init_data(self, init_data):
