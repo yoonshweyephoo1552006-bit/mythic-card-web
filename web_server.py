@@ -35,20 +35,49 @@ def init_db():
                 schema_path.read_text(encoding="utf-8")
             )
 
-        card_image = BASE_DIR / "assets" / "cards" / "legendary" / "CARD-0001.jpg"
+        # Seed the built-in card catalog.
+        # INSERT OR IGNORE keeps existing production card data safe.
+        seed_cards = [
+            ("CARD-0001", "Card #0001", "legendary",
+             "assets/cards/legendary/CARD-0001.jpg"),
+            ("CARD-0002", "Card #0002", "common",
+             "assets/cards/common/CARD-0002.jpg"),
+            ("CARD-0004", "Card #0004", "mythic",
+             "assets/cards/mythic/CARD-0004.jpg"),
+            ("CARD-0005", "Card #0005", "mythic",
+             "assets/cards/mythic/CARD-0005.jpg"),
+            ("CARD-0006", "Card #0006", "mythic",
+             "assets/cards/mythic/CARD-0006.jpg"),
+            ("CARD-0007", "Card #0007", "mythic",
+             "assets/cards/mythic/CARD-0007.jpg"),
+            ("CARD-0008", "Card #0008", "mythic",
+             "assets/cards/mythic/CARD-0008.jpg"),
+            ("CARD-0009", "Card #0009", "mythic",
+             "assets/cards/mythic/CARD-0009.jpg"),
+            ("CARD-0010", "Card #0010", "mythic",
+             "assets/cards/mythic/CARD-0010.jpg"),
+            ("CARD-0011", "Card #0011", "mythic",
+             "assets/cards/mythic/CARD-0011.jpg"),
+            ("CARD-0012", "Card #0012", "mythic",
+             "assets/cards/mythic/CARD-0012.jpg"),
+            ("CARD-0013", "Card #0013", "mythic",
+             "assets/cards/mythic/CARD-0013.jpg"),
+        ]
 
-        if card_image.exists():
-            db.execute("""
-                INSERT OR IGNORE INTO cards
-                (card_code, name, rarity, image_path, is_active)
-                VALUES (?, ?, ?, ?, ?)
-            """, (
-                "CARD-0001",
-                "Card #0001",
-                "legendary",
-                "assets/cards/legendary/CARD-0001.jpg",
-                1
-            ))
+        for card_code, name, rarity, image_path in seed_cards:
+            card_image = BASE_DIR / image_path
+            if card_image.exists():
+                db.execute("""
+                    INSERT OR IGNORE INTO cards
+                    (card_code, name, rarity, image_path, is_active)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (
+                    card_code,
+                    name,
+                    rarity,
+                    image_path,
+                    1
+                ))
 
         db.commit()
 
