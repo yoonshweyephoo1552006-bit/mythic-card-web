@@ -309,8 +309,10 @@ async function loadStats() {
             );
         }
 
-        // "total-cards" is the global card catalog count.
-        // User-owned total is handled separately by loadCollection().
+        setText(
+            "total-cards",
+            data.stats.cards ?? 0
+        );
 
     } catch (error) {
         console.error("Stats API:", error);
@@ -427,63 +429,165 @@ async function loadMe() {
    Collection API
 ----------------------------- */
 
+let collectionCards = [];
+let activeRarityFilter = "all";
+
+function getCardRarity(card) {
+    return String(card?.rarity || "common").toLowerCase();
+}
+
+function getMythicEffect(rarity, index) {
+    if (rarity === "mythic") {
+        const effects = [
+            "mythic-cosmic",
+            "mythic-fire",
+            "mythic-void",
+            "mythic-arcane",
+            "mythic-storm",
+            "mythic-divine"
+        ];
+        return effects[index % effects.length];
+    }
+
+    if (rarity === "legendary") return "legendary-effect";
+
+    return "normal-effect";
+}
+
+function updateCollectionStats(cards) {
+    const total = cards.reduce(
+        (sum, card) => sum + Number(card.quantity || 0),
+        0
+    );
+
+    const legendary = cards
+        .filter(card => getCardRarity(card) === "legendary")
+        .reduce((sum, card) => sum + Number(card.quantity || 0), 0);
+
+    const mythic = cards
+        .filter(card => getCardRarity(card) === "mythic")
+        .reduce((sum, card) => sum + Number(card.quantity || 0), 0);
+
+    setText("total-cards", total);
+    setText("legendary-count", legendary);
+    setText("mythic-count", mythic);
+}
+
+function openCardGallery(card) {
+    const modal = document.getElementById("card-modal");
+    const imageBox = document.getElementById("card-modal-image");
+    const nameBox = document.getElementById("card-modal-name");
+    const codeBox = document.getElementById("card-modal-code");
+    const rarityBox = document.getElementById("card-modal-rarity");
+
+    if (!modal) return;
+
+    const rarity = getCardRarity(card);
+
+    rarityBox.textContent = rarity.toUpperCase();
+    rarityBox.className = "modal-rarity " + rarity;
+
+    nameBox.textContent =
+        card.name || card.card_code || "Mystic Card";
+
+    codeBox.textContent =
+        card.card_code || "UNKNOWN";
+
+    if (card.image_path) {
+        imageBox.innerHTML = `
+            <div class="modal-card-aura ${rarity}"></div>
+            <img src="${ASSET_BASE}${card.image_path}" alt="">
+        `;
+    } else {
+        imageBox.innerHTML = `
+            <div class="modal-card-placeholder">🃏</div>
+        `;
+    }
+
+    modal.classList.add("show");
+    document.body.classList.add("modal-open");
+}
+
+function closeCardGallery() {
+    const modal = document.getElementById("card-modal");
+    if (!modal) return;
+
+    modal.classList.remove("show");
+    document.body.classList.remove("modal-open");
+}
+
+function renderCollection(cards) {
+    const list = document.getElementById("collection-list");
+    const empty = document.getElementById("collection-empty");
+
+    if (!list) return;
+
+    list.innerHTML = "";
+
+    const filtered = cards.filter(card => {
+        if (activeRarityFilter === "all") return true;
+        return getCardRarity(card) === activeRarityFilter;
+    });
+
+    if (!filtered.length) {
+        if (empty) empty.style.display = "block";
+        return;
+    }
+
+    if (empty) empty.style.display = "none";
+
+    filtered.forEach((card, index) => {
+        const rarity = getCardRarity(card);
+        const effect = getMythicEffect(rarity, index);
+
+        const item = document.createElement("button");
+        item.type = "button";
+        item.className =
+            `collection-item ${rarity}-card ${effect}`;
+
+        item.innerHTML = `
+            <div class="collection-image">
+                <div class="card-energy"></div>
+
+                ${
+                    card.image_path
+                    ? `<img src="${ASSET_BASE}${card.image_path}" alt="">`
+                    : `<div class="collection-placeholder">🃏</div>`
+                }
+
+                <div class="card-shine"></div>
+                <div class="card-corners"></div>
+            </div>
+
+            <div class="collection-info">
+                <strong>${card.name || card.card_code || "Card"}</strong>
+                <span>${rarity.toUpperCase()}</span>
+                <small>×${Number(card.quantity || 0)}</small>
+            </div>
+        `;
+
+        item.addEventListener("click", () => openCardGallery(card));
+
+        list.appendChild(item);
+    });
+}
+
 async function loadCollection() {
     try {
         const data = await apiFetch(API_BASE + "/api/collection");
 
-        const cards = data.cards || [];
+        collectionCards = Array.isArray(data.cards)
+            ? data.cards
+            : [];
 
-        const list =
-            document.getElementById("collection-list");
-
-        const empty =
-            document.getElementById("collection-empty");
-
-        if (!list) return;
-
-        list.innerHTML = "";
-
-        if (!cards.length) {
-            if (empty) empty.style.display = "block";
-            setText("total-cards", 0);
-            return;
-        }
-
-        if (empty) empty.style.display = "none";
-
-        for (const card of cards) {
-            const item = document.createElement("div");
-            item.className = "collection-item";
-
-            const image = card.image_path
-                ? `<img src="${ASSET_BASE}${card.image_path}" alt="">`
-                : `<div class="collection-placeholder">🃏</div>`;
-
-            item.innerHTML = `
-                <div class="collection-image">
-                    ${image}
-                </div>
-                <div class="collection-info">
-                    <strong>${card.name || card.card_code || "Card"}</strong>
-                    <span>${String(card.rarity || "").toUpperCase()}</span>
-                    <small>×${card.quantity || 0}</small>
-                </div>
-            `;
-
-            list.appendChild(item);
-        }
-
-        const totalOwned = cards.reduce(
-            (sum, card) => sum + Number(card.quantity || 0),
-            0
-        );
-
-        setText("total-cards", totalOwned);
+        updateCollectionStats(collectionCards);
+        renderCollection(collectionCards);
 
     } catch (error) {
         console.error("Collection API:", error);
     }
 }
+
 
 
 /* -----------------------------
@@ -695,6 +799,29 @@ async function loadUserData() {
         loadTrades()
     ]);
 }
+
+
+/* -----------------------------
+   Collection UI
+----------------------------- */
+
+document.querySelectorAll(".rarity-filter").forEach((button) => {
+    button.addEventListener("click", () => {
+        activeRarityFilter = button.dataset.rarity || "all";
+
+        document.querySelectorAll(".rarity-filter").forEach((btn) => {
+            btn.classList.toggle("active", btn === button);
+        });
+
+        renderCollection(collectionCards);
+    });
+});
+
+document.getElementById("card-modal-close")
+    ?.addEventListener("click", closeCardGallery);
+
+document.querySelector(".card-modal-backdrop")
+    ?.addEventListener("click", closeCardGallery);
 
 
 /* -----------------------------

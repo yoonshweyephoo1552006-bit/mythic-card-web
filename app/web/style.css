@@ -368,3 +368,76 @@ h2 {
     text-align: center;
 }
 
+
+
+/* =============================
+   MYTHIC CARD REVEAL EFFECTS
+============================= */
+
+@keyframes mythicCardReveal {
+    0% {
+        opacity: 0;
+        transform: translateY(18px) scale(.82) rotateY(18deg);
+        filter: brightness(.7) blur(3px);
+    }
+    55% {
+        opacity: 1;
+        transform: translateY(-4px) scale(1.04) rotateY(-4deg);
+        filter: brightness(1.5) blur(0);
+    }
+    100% {
+        opacity: 1;
+        transform: translateY(0) scale(1) rotateY(0);
+        filter: brightness(1);
+    }
+}
+
+@keyframes mythicGlow {
+    0%, 100% {
+        box-shadow:
+            0 15px 45px rgba(0,0,0,.45),
+            0 0 0 rgba(255,215,80,0);
+    }
+    50% {
+        box-shadow:
+            0 15px 45px rgba(0,0,0,.45),
+            0 0 35px rgba(255,215,80,.75);
+    }
+}
+
+@keyframes mythicShimmer {
+    0% {
+        background-position: 0% 50%;
+    }
+    100% {
+        background-position: 200% 50%;
+    }
+}
+
+.mythic-card-reveal {
+    animation:
+        mythicCardReveal .65s cubic-bezier(.2,.8,.2,1) both,
+        mythicGlow 1.4s ease-in-out .35s 2;
+    transform-style: preserve-3d;
+}
+
+.mythic-card-reveal .card-placeholder {
+    background:
+        linear-gradient(
+            110deg,
+            #111522 20%,
+            #242b3d 35%,
+            #111522 50%
+        );
+    background-size: 200% 100%;
+    animation: mythicShimmer 1.6s linear infinite;
+}
+
+.mythic-catching {
+    animation: mythicGlow .8s ease-in-out infinite;
+}
+
+.catch-btn:disabled {
+    opacity: .8;
+    cursor: wait;
+}

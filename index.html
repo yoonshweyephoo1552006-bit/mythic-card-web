@@ -66,23 +66,35 @@
             </section>
 
             <section id="collection" class="screen">
-                <h2>🃏 Collection</h2>
-
-                <div class="stats">
+                <div class="collection-header">
                     <div>
+                        <div class="eyebrow">✦ YOUR ARCHIVE</div>
+                        <h2>🃏 Collection</h2>
+                    </div>
+                    <div class="collection-badge">MYTHIC</div>
+                </div>
+
+                <div class="stats collection-stats">
+                    <div class="stat-box">
                         <strong id="total-cards">0</strong>
-                        <span>Total Cards</span>
+                        <span>Total Owned</span>
                     </div>
 
-                    <div>
-                        <strong>0</strong>
+                    <div class="stat-box legendary-stat">
+                        <strong id="legendary-count">0</strong>
                         <span>Legendary</span>
                     </div>
 
-                    <div>
-                        <strong>0</strong>
+                    <div class="stat-box mythic-stat">
+                        <strong id="mythic-count">0</strong>
                         <span>Mythic</span>
                     </div>
+                </div>
+
+                <div class="collection-filter">
+                    <button class="rarity-filter active" data-rarity="all">ALL</button>
+                    <button class="rarity-filter" data-rarity="mythic">MYTHIC</button>
+                    <button class="rarity-filter" data-rarity="legendary">LEGENDARY</button>
                 </div>
 
                 <div id="collection-empty" class="empty-card">
@@ -93,6 +105,19 @@
 
                 <div id="collection-list" class="collection-list"></div>
             </section>
+
+            <div id="card-modal" class="card-modal">
+                <div class="card-modal-backdrop"></div>
+                <div class="card-modal-content">
+                    <button id="card-modal-close" class="card-modal-close">×</button>
+                    <div id="card-modal-rarity" class="modal-rarity">MYTHIC</div>
+                    <div id="card-modal-image" class="modal-card-image"></div>
+                    <div id="card-modal-name" class="modal-card-name">Card</div>
+                    <div id="card-modal-code" class="modal-card-code">CARD</div>
+                    <div class="modal-card-divider"></div>
+                    <div class="modal-card-effect">✦ MYTHIC ENERGY DETECTED ✦</div>
+                </div>
+            </div>
 
             <section id="profile" class="screen">
                 <h2>👤 Profile</h2>

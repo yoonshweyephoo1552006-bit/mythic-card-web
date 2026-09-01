@@ -234,6 +234,7 @@ async function catchCard() {
     if (button) {
         button.disabled = true;
         button.textContent = "🎯 CATCHING...";
+        button.classList.add("mythic-catching");
     }
 
     try {
@@ -267,9 +268,18 @@ async function catchCard() {
 
         activeDrop = null;
 
+        const cardFrame = document.querySelector(".card-frame");
+
         if (button) {
+            button.classList.remove("mythic-catching");
             button.disabled = true;
             button.textContent = "✅ CAUGHT";
+        }
+
+        if (cardFrame) {
+            cardFrame.classList.remove("mythic-card-reveal");
+            void cardFrame.offsetWidth;
+            cardFrame.classList.add("mythic-card-reveal");
         }
 
         await loadDrop();
