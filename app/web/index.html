@@ -11,6 +11,25 @@
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
 
     <link rel="stylesheet" href="./style.css">
+
+<style>
+.receipt-modal-content {
+    width: min(92vw, 520px);
+    max-height: 90vh;
+    overflow: auto;
+}
+
+.receipt-modal-image {
+    display: block;
+    width: 100%;
+    max-height: 72vh;
+    object-fit: contain;
+    margin: 14px auto 0;
+    border-radius: 16px;
+    background: rgba(0,0,0,.35);
+}
+</style>
+
 </head>
 
 <body>
@@ -365,6 +384,15 @@
             </button>
         </nav>
 
+    </div>
+
+    <div id="receipt-modal" class="card-modal">
+        <div class="card-modal-backdrop" id="receipt-modal-backdrop"></div>
+        <div class="card-modal-content receipt-modal-content">
+            <button id="receipt-modal-close" class="card-modal-close">×</button>
+            <div class="modal-rarity">PREMIUM RECEIPT</div>
+            <img id="receipt-modal-image" class="receipt-modal-image" alt="Premium payment receipt">
+        </div>
     </div>
 
     <script src="./app.js"></script>
