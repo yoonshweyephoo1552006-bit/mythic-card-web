@@ -453,16 +453,51 @@ async function apiFetch(path, options = {}) {
         headers["X-Telegram-Init-Data"] = initData;
     }
 
-    const response = await fetch(path, {
-        cache: "no-store",
-        ...options,
-        headers
-    });
+    let response;
 
-    const data = await response.json();
+    try {
+        response = await fetch(path, {
+            cache: "no-store",
+            ...options,
+            headers
+        });
+    } catch (error) {
+        console.error("API network error:", path, error);
+        throw new Error(
+            `Network error while contacting API: ${error.message || "Failed to fetch"}`
+        );
+    }
+
+    const text = await response.text();
+
+    let data;
+
+    try {
+        data = JSON.parse(text);
+    } catch (error) {
+        console.error(
+            "API invalid JSON:",
+            path,
+            response.status,
+            text
+        );
+
+        throw new Error(
+            `Server returned invalid response (${response.status})`
+        );
+    }
 
     if (!response.ok || !data.ok) {
-        throw new Error(data.error || `API error ${response.status}`);
+        console.error(
+            "API error:",
+            path,
+            response.status,
+            data
+        );
+
+        throw new Error(
+            data.error || `API error ${response.status}`
+        );
     }
 
     return data;
