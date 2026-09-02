@@ -4,7 +4,7 @@ const API_BASE =
         ? ""
         : "https://mythic-card-web-production.up.railway.app";
 const tg = window.Telegram?.WebApp;
-const ASSET_BASE = 'https://yoonshweyephoo1552006-bit.github.io/mythic-card-web/';
+const ASSET_BASE = "https://mythic-card-web-production.up.railway.app/";
 
 if (tg) {
     tg.ready();
