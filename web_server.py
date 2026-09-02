@@ -368,6 +368,10 @@ class Handler(BaseHTTPRequestHandler):
                 str(len(data))
             )
             self.send_header(
+                "Access-Control-Allow-Origin",
+                "*"
+            )
+            self.send_header(
                 "Cache-Control",
                 "no-store"
             )
