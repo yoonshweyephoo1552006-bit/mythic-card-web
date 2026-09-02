@@ -240,7 +240,7 @@ class Handler(BaseHTTPRequestHandler):
                 }, 400)
 
             now = datetime.now(timezone.utc)
-            expires = now + timedelta(minutes=10)
+            expires = now + timedelta(seconds=30)
 
             with get_db() as db:
                 db.execute(
@@ -387,6 +387,7 @@ class Handler(BaseHTTPRequestHandler):
 
             payload = json.loads(raw.decode("utf-8"))
             init_data = payload.get("initData", "")
+            catch_name = payload.get("catch_name", "")
 
             telegram_user, error = self.verify_telegram_init_data(init_data)
 
@@ -459,6 +460,27 @@ class Handler(BaseHTTPRequestHandler):
                         "ok": False,
                         "error": "No active drop"
                     }, 409)
+
+                # Validate the card name typed by the player.
+                def normalize_card_name(value):
+                    return " ".join(
+                        str(value or "").strip().split()
+                    ).casefold()
+
+                entered_name = normalize_card_name(catch_name)
+                actual_name = normalize_card_name(drop["name"])
+
+                if not entered_name:
+                    return json_response(self, {
+                        "ok": False,
+                        "error": "Please type the card name"
+                    }, 400)
+
+                if entered_name != actual_name:
+                    return json_response(self, {
+                        "ok": False,
+                        "error": "Wrong card name"
+                    }, 400)
 
                 # Atomic winner selection.
                 cursor = db.execute(

@@ -1,4 +1,8 @@
-const API_BASE = 'https://mythic-card-web-production.up.railway.app';
+const API_BASE =
+    (window.location.hostname === "127.0.0.1" ||
+     window.location.hostname === "localhost")
+        ? ""
+        : "https://mythic-card-web-production.up.railway.app";
 const tg = window.Telegram?.WebApp;
 const ASSET_BASE = 'https://yoonshweyephoo1552006-bit.github.io/mythic-card-web/';
 
@@ -48,15 +52,13 @@ function loadTelegramUser() {
 ----------------------------- */
 
 function formatRemaining(ms) {
-    if (ms <= 0) return "00:00:00";
+    if (ms <= 0) return "00:00";
 
     const total = Math.floor(ms / 1000);
-
-    const h = Math.floor(total / 3600);
-    const m = Math.floor((total % 3600) / 60);
+    const m = Math.floor(total / 60);
     const s = total % 60;
 
-    return [h, m, s]
+    return [m, s]
         .map(v => String(v).padStart(2, "0"))
         .join(":");
 }
@@ -104,8 +106,6 @@ function renderDrop(drop) {
     const rarityEl =
         document.querySelector(".hero .rarity");
 
-    const nameEl =
-        document.querySelector(".hero .card-name");
 
     const frameEl =
         document.querySelector(".hero .card-frame");
@@ -113,18 +113,22 @@ function renderDrop(drop) {
     const button =
         document.getElementById("catch-btn");
 
+    const input =
+        document.getElementById("catch-input");
+
     if (!drop) {
         if (rarityEl) {
             rarityEl.textContent = "NO ACTIVE DROP";
         }
 
-        if (nameEl) {
-            nameEl.textContent = "Come back later";
-        }
-
         if (frameEl) {
             frameEl.innerHTML =
                 '<div class="card-placeholder">🃏</div>';
+        }
+
+        if (input) {
+            input.value = "";
+            input.disabled = true;
         }
 
         if (button) {
@@ -142,11 +146,6 @@ function renderDrop(drop) {
                 .toUpperCase();
     }
 
-    if (nameEl) {
-        nameEl.textContent =
-            drop.name || drop.card_code || "Unknown Card";
-    }
-
     if (frameEl) {
         if (drop.image_path) {
             frameEl.innerHTML =
@@ -162,9 +161,16 @@ function renderDrop(drop) {
             new Date(drop.expires_at).getTime();
 
         if (expires > Date.now()) {
+            if (input) {
+                input.disabled = false;
+            }
+
             button.disabled = false;
             button.textContent = "⚡ CATCH";
         } else {
+            if (input) {
+                input.disabled = true;
+            }
             button.disabled = true;
             button.textContent = "⏰ EXPIRED";
         }
@@ -208,6 +214,9 @@ async function catchCard() {
     const button =
         document.getElementById("catch-btn");
 
+    const input =
+        document.getElementById("catch-input");
+
     if (!activeDrop) {
         showMessage("❌ No active drop.");
         return;
@@ -231,10 +240,25 @@ async function catchCard() {
         return;
     }
 
+    const catchName =
+        input?.value?.trim() || "";
+
+    if (!catchName) {
+        showMessage(
+            "✍️ Type the card name first."
+        );
+
+        input?.focus();
+        return;
+    }
+
     if (button) {
         button.disabled = true;
-        button.textContent = "🎯 CATCHING...";
-        button.classList.add("mythic-catching");
+        button.textContent = "🎯 CHECKING...";
+    }
+
+    if (input) {
+        input.disabled = true;
     }
 
     try {
@@ -244,7 +268,8 @@ async function catchCard() {
                 "Content-Type": "application/json"
             },
             body: JSON.stringify({
-                initData: initData
+                initData: initData,
+                catch_name: catchName
             })
         });
 
@@ -253,10 +278,19 @@ async function catchCard() {
         if (!data.ok) {
             showMessage(
                 "❌ " +
-                (data.error || "Catch failed.")
+                (data.error || "Wrong card name.")
             );
 
-            await loadDrop();
+            if (input) {
+                input.disabled = false;
+                input.focus();
+            }
+
+            if (button) {
+                button.disabled = false;
+                button.textContent = "⚡ CATCH";
+            }
+
             return;
         }
 
@@ -268,18 +302,14 @@ async function catchCard() {
 
         activeDrop = null;
 
-        const cardFrame = document.querySelector(".card-frame");
-
-        if (button) {
-            button.classList.remove("mythic-catching");
-            button.disabled = true;
-            button.textContent = "✅ CAUGHT";
+        if (input) {
+            input.value = "";
+            input.disabled = true;
         }
 
-        if (cardFrame) {
-            cardFrame.classList.remove("mythic-card-reveal");
-            void cardFrame.offsetWidth;
-            cardFrame.classList.add("mythic-card-reveal");
+        if (button) {
+            button.disabled = true;
+            button.textContent = "✅ CAUGHT";
         }
 
         await loadDrop();
@@ -293,13 +323,16 @@ async function catchCard() {
             "❌ Connection error. Please try again."
         );
 
+        if (input) {
+            input.disabled = false;
+        }
+
         if (button) {
             button.disabled = false;
             button.textContent = "⚡ CATCH";
         }
     }
 }
-
 
 /* -----------------------------
    Stats
@@ -439,57 +472,165 @@ async function loadMe() {
    Collection API
 ----------------------------- */
 
+let collectionCards = [];
+let activeRarityFilter = "all";
+
+function getCardRarity(card) {
+    return String(card?.rarity || "common").toLowerCase();
+}
+
+function getMythicEffect(rarity, index) {
+    if (rarity === "mythic") {
+        const effects = [
+            "mythic-cosmic",
+            "mythic-fire",
+            "mythic-void",
+            "mythic-arcane",
+            "mythic-storm",
+            "mythic-divine"
+        ];
+        return effects[index % effects.length];
+    }
+
+    if (rarity === "legendary") return "legendary-effect";
+
+    return "normal-effect";
+}
+
+function updateCollectionStats(cards) {
+    const total = cards.reduce(
+        (sum, card) => sum + Number(card.quantity || 0),
+        0
+    );
+
+    const legendary = cards
+        .filter(card => getCardRarity(card) === "legendary")
+        .reduce((sum, card) => sum + Number(card.quantity || 0), 0);
+
+    const mythic = cards
+        .filter(card => getCardRarity(card) === "mythic")
+        .reduce((sum, card) => sum + Number(card.quantity || 0), 0);
+
+    setText("total-cards", total);
+    setText("legendary-count", legendary);
+    setText("mythic-count", mythic);
+}
+
+function openCardGallery(card) {
+    const modal = document.getElementById("card-modal");
+    const imageBox = document.getElementById("card-modal-image");
+    const nameBox = document.getElementById("card-modal-name");
+    const codeBox = document.getElementById("card-modal-code");
+    const rarityBox = document.getElementById("card-modal-rarity");
+
+    if (!modal) return;
+
+    const rarity = getCardRarity(card);
+
+    rarityBox.textContent = rarity.toUpperCase();
+    rarityBox.className = "modal-rarity " + rarity;
+
+    nameBox.textContent =
+        card.name || card.card_code || "Mystic Card";
+
+    codeBox.textContent =
+        card.card_code || "UNKNOWN";
+
+    if (card.image_path) {
+        imageBox.innerHTML = `
+            <div class="modal-card-aura ${rarity}"></div>
+            <img src="${ASSET_BASE}${card.image_path}" alt="">
+        `;
+    } else {
+        imageBox.innerHTML = `
+            <div class="modal-card-placeholder">🃏</div>
+        `;
+    }
+
+    modal.classList.add("show");
+    document.body.classList.add("modal-open");
+}
+
+function closeCardGallery() {
+    const modal = document.getElementById("card-modal");
+    if (!modal) return;
+
+    modal.classList.remove("show");
+    document.body.classList.remove("modal-open");
+}
+
+function renderCollection(cards) {
+    const list = document.getElementById("collection-list");
+    const empty = document.getElementById("collection-empty");
+
+    if (!list) return;
+
+    list.innerHTML = "";
+
+    const filtered = cards.filter(card => {
+        if (activeRarityFilter === "all") return true;
+        return getCardRarity(card) === activeRarityFilter;
+    });
+
+    if (!filtered.length) {
+        if (empty) empty.style.display = "block";
+        return;
+    }
+
+    if (empty) empty.style.display = "none";
+
+    filtered.forEach((card, index) => {
+        const rarity = getCardRarity(card);
+        const effect = getMythicEffect(rarity, index);
+
+        const item = document.createElement("button");
+        item.type = "button";
+        item.className =
+            `collection-item ${rarity}-card ${effect}`;
+
+        item.innerHTML = `
+            <div class="collection-image">
+                <div class="card-energy"></div>
+
+                ${
+                    card.image_path
+                    ? `<img src="${ASSET_BASE}${card.image_path}" alt="">`
+                    : `<div class="collection-placeholder">🃏</div>`
+                }
+
+                <div class="card-shine"></div>
+                <div class="card-corners"></div>
+            </div>
+
+            <div class="collection-info">
+                <strong>${card.name || card.card_code || "Card"}</strong>
+                <span>${rarity.toUpperCase()}</span>
+                <small>×${Number(card.quantity || 0)}</small>
+            </div>
+        `;
+
+        item.addEventListener("click", () => openCardGallery(card));
+
+        list.appendChild(item);
+    });
+}
+
 async function loadCollection() {
     try {
         const data = await apiFetch(API_BASE + "/api/collection");
 
-        const cards = data.cards || [];
+        collectionCards = Array.isArray(data.cards)
+            ? data.cards
+            : [];
 
-        const list =
-            document.getElementById("collection-list");
-
-        const empty =
-            document.getElementById("collection-empty");
-
-        if (!list) return;
-
-        list.innerHTML = "";
-
-        if (!cards.length) {
-            if (empty) empty.style.display = "block";
-            return;
-        }
-
-        if (empty) empty.style.display = "none";
-
-        for (const card of cards) {
-            const item = document.createElement("div");
-            item.className = "collection-item";
-
-            const image = card.image_path
-                ? `<img src="${ASSET_BASE}${card.image_path}" alt="">`
-                : `<div class="collection-placeholder">🃏</div>`;
-
-            item.innerHTML = `
-                <div class="collection-image">
-                    ${image}
-                </div>
-                <div class="collection-info">
-                    <strong>${card.name || card.card_code || "Card"}</strong>
-                    <span>${String(card.rarity || "").toUpperCase()}</span>
-                    <small>×${card.quantity || 0}</small>
-                </div>
-            `;
-
-            list.appendChild(item);
-        }
-
-        setText("total-owned", cards.length);
+        updateCollectionStats(collectionCards);
+        renderCollection(collectionCards);
 
     } catch (error) {
         console.error("Collection API:", error);
     }
 }
+
 
 
 /* -----------------------------
@@ -704,6 +845,29 @@ async function loadUserData() {
 
 
 /* -----------------------------
+   Collection UI
+----------------------------- */
+
+document.querySelectorAll(".rarity-filter").forEach((button) => {
+    button.addEventListener("click", () => {
+        activeRarityFilter = button.dataset.rarity || "all";
+
+        document.querySelectorAll(".rarity-filter").forEach((btn) => {
+            btn.classList.toggle("active", btn === button);
+        });
+
+        renderCollection(collectionCards);
+    });
+});
+
+document.getElementById("card-modal-close")
+    ?.addEventListener("click", closeCardGallery);
+
+document.querySelector(".card-modal-backdrop")
+    ?.addEventListener("click", closeCardGallery);
+
+
+/* -----------------------------
    Navigation
 ----------------------------- */
 
@@ -734,6 +898,14 @@ document.querySelectorAll(".nav-btn").forEach((button) => {
 
 document.getElementById("catch-btn")
     ?.addEventListener("click", catchCard);
+
+document.getElementById("catch-input")
+    ?.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+            event.preventDefault();
+            catchCard();
+        }
+    });
 
 
 /* -----------------------------

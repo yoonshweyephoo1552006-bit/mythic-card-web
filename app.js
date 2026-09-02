@@ -1,4 +1,8 @@
-const API_BASE = 'https://mythic-card-web-production.up.railway.app';
+const API_BASE =
+    (window.location.hostname === "127.0.0.1" ||
+     window.location.hostname === "localhost")
+        ? ""
+        : "https://mythic-card-web-production.up.railway.app";
 const tg = window.Telegram?.WebApp;
 const ASSET_BASE = 'https://yoonshweyephoo1552006-bit.github.io/mythic-card-web/';
 
@@ -48,15 +52,13 @@ function loadTelegramUser() {
 ----------------------------- */
 
 function formatRemaining(ms) {
-    if (ms <= 0) return "00:00:00";
+    if (ms <= 0) return "00:00";
 
     const total = Math.floor(ms / 1000);
-
-    const h = Math.floor(total / 3600);
-    const m = Math.floor((total % 3600) / 60);
+    const m = Math.floor(total / 60);
     const s = total % 60;
 
-    return [h, m, s]
+    return [m, s]
         .map(v => String(v).padStart(2, "0"))
         .join(":");
 }
@@ -104,8 +106,6 @@ function renderDrop(drop) {
     const rarityEl =
         document.querySelector(".hero .rarity");
 
-    const nameEl =
-        document.querySelector(".hero .card-name");
 
     const frameEl =
         document.querySelector(".hero .card-frame");
@@ -113,18 +113,22 @@ function renderDrop(drop) {
     const button =
         document.getElementById("catch-btn");
 
+    const input =
+        document.getElementById("catch-input");
+
     if (!drop) {
         if (rarityEl) {
             rarityEl.textContent = "NO ACTIVE DROP";
         }
 
-        if (nameEl) {
-            nameEl.textContent = "Come back later";
-        }
-
         if (frameEl) {
             frameEl.innerHTML =
                 '<div class="card-placeholder">🃏</div>';
+        }
+
+        if (input) {
+            input.value = "";
+            input.disabled = true;
         }
 
         if (button) {
@@ -142,11 +146,6 @@ function renderDrop(drop) {
                 .toUpperCase();
     }
 
-    if (nameEl) {
-        nameEl.textContent =
-            drop.name || drop.card_code || "Unknown Card";
-    }
-
     if (frameEl) {
         if (drop.image_path) {
             frameEl.innerHTML =
@@ -162,9 +161,16 @@ function renderDrop(drop) {
             new Date(drop.expires_at).getTime();
 
         if (expires > Date.now()) {
+            if (input) {
+                input.disabled = false;
+            }
+
             button.disabled = false;
             button.textContent = "⚡ CATCH";
         } else {
+            if (input) {
+                input.disabled = true;
+            }
             button.disabled = true;
             button.textContent = "⏰ EXPIRED";
         }
@@ -208,6 +214,9 @@ async function catchCard() {
     const button =
         document.getElementById("catch-btn");
 
+    const input =
+        document.getElementById("catch-input");
+
     if (!activeDrop) {
         showMessage("❌ No active drop.");
         return;
@@ -231,9 +240,25 @@ async function catchCard() {
         return;
     }
 
+    const catchName =
+        input?.value?.trim() || "";
+
+    if (!catchName) {
+        showMessage(
+            "✍️ Type the card name first."
+        );
+
+        input?.focus();
+        return;
+    }
+
     if (button) {
         button.disabled = true;
-        button.textContent = "🎯 CATCHING...";
+        button.textContent = "🎯 CHECKING...";
+    }
+
+    if (input) {
+        input.disabled = true;
     }
 
     try {
@@ -243,7 +268,8 @@ async function catchCard() {
                 "Content-Type": "application/json"
             },
             body: JSON.stringify({
-                initData: initData
+                initData: initData,
+                catch_name: catchName
             })
         });
 
@@ -252,10 +278,19 @@ async function catchCard() {
         if (!data.ok) {
             showMessage(
                 "❌ " +
-                (data.error || "Catch failed.")
+                (data.error || "Wrong card name.")
             );
 
-            await loadDrop();
+            if (input) {
+                input.disabled = false;
+                input.focus();
+            }
+
+            if (button) {
+                button.disabled = false;
+                button.textContent = "⚡ CATCH";
+            }
+
             return;
         }
 
@@ -266,6 +301,11 @@ async function catchCard() {
         );
 
         activeDrop = null;
+
+        if (input) {
+            input.value = "";
+            input.disabled = true;
+        }
 
         if (button) {
             button.disabled = true;
@@ -283,13 +323,16 @@ async function catchCard() {
             "❌ Connection error. Please try again."
         );
 
+        if (input) {
+            input.disabled = false;
+        }
+
         if (button) {
             button.disabled = false;
             button.textContent = "⚡ CATCH";
         }
     }
 }
-
 
 /* -----------------------------
    Stats
@@ -855,6 +898,14 @@ document.querySelectorAll(".nav-btn").forEach((button) => {
 
 document.getElementById("catch-btn")
     ?.addEventListener("click", catchCard);
+
+document.getElementById("catch-input")
+    ?.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+            event.preventDefault();
+            catchCard();
+        }
+    });
 
 
 /* -----------------------------
