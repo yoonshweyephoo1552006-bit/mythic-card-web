@@ -2487,6 +2487,7 @@ setupPremiumAdmin();
 loadDrop();
 loadStats();
 loadCards();
+setupTradeUI();
 loadUserData();
 loadEvents();
 
