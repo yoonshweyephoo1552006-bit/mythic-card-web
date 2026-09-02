@@ -43,7 +43,46 @@ function loadTelegramUser() {
 
     setText("user-name", name);
     setText("profile-name", name);
+    setText(
+        "profile-username",
+        user.username ? `@${user.username}` : "@username"
+    );
     setText("profile-id", `Telegram ID: ${user.id}`);
+
+    const avatar = document.getElementById("profile-avatar");
+    const fallback = document.getElementById("profile-avatar-fallback");
+
+    if (avatar && fallback && user.photo_url) {
+        avatar.src = user.photo_url;
+
+        avatar.onload = () => {
+            avatar.style.display = "block";
+            fallback.style.display = "none";
+        };
+
+        avatar.onerror = () => {
+            avatar.style.display = "none";
+            fallback.style.display = "grid";
+        };
+    }
+
+    const profileFrame =
+        document.getElementById("profile-frame");
+
+    const ownerBadge =
+        document.getElementById("profile-owner-badge");
+
+    if (profileFrame && user.id === 5599773708) {
+        profileFrame.classList.remove(
+            "free-frame",
+            "premium-frame"
+        );
+        profileFrame.classList.add("owner-frame");
+    }
+
+    if (ownerBadge && user.id === 5599773708) {
+        ownerBadge.classList.add("show");
+    }
 }
 
 
@@ -462,6 +501,45 @@ async function loadMe() {
                 u.is_premium
                     ? `⭐ Premium until ${u.premium_until || "—"}`
                     : "Free Player";
+        }
+
+        const profileFrame =
+            document.getElementById("profile-frame");
+
+        const premiumBadge =
+            document.getElementById("profile-premium-badge");
+
+        const ownerBadge =
+            document.getElementById("profile-owner-badge");
+
+        if (profileFrame) {
+            profileFrame.classList.remove(
+                "free-frame",
+                "premium-frame",
+                "owner-frame"
+            );
+
+            if (u.is_owner) {
+                profileFrame.classList.add("owner-frame");
+            } else if (u.is_premium) {
+                profileFrame.classList.add("premium-frame");
+            } else {
+                profileFrame.classList.add("free-frame");
+            }
+        }
+
+        if (premiumBadge) {
+            premiumBadge.classList.toggle(
+                "show",
+                Boolean(u.is_premium)
+            );
+        }
+
+        if (ownerBadge) {
+            ownerBadge.classList.toggle(
+                "show",
+                Boolean(u.is_owner)
+            );
         }
 
     } catch (error) {

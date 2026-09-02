@@ -179,16 +179,35 @@
             <section id="profile" class="screen">
                 <h2>👤 Profile</h2>
 
-                <div class="profile-card">
-                    <div class="avatar">👤</div>
-                    <h3 id="profile-name">Player</h3>
-                    <p id="profile-id">Telegram ID: —</p>
+                <div id="profile-card" class="profile-card profile-card-v2">
+                    <div id="profile-frame" class="profile-frame free-frame">
+                        <div class="profile-avatar-wrap">
+                            <img
+                                id="profile-avatar"
+                                class="profile-avatar"
+                                src=""
+                                alt="Profile"
+                            >
+                            <div id="profile-avatar-fallback" class="profile-avatar-fallback">👤</div>
+                        </div>
+                        <div id="profile-owner-badge" class="profile-owner-badge">👑 OWNER</div>
+                        <div id="profile-premium-badge" class="profile-premium-badge">⭐ PREMIUM</div>
+                    </div>
+
+                    <div class="profile-identity">
+                        <h3 id="profile-name">Player</h3>
+                        <p id="profile-username">@username</p>
+                        <p id="profile-id">Telegram ID: —</p>
+                    </div>
+
                     <div id="profile-premium" class="profile-premium">
                         Free Player
                     </div>
+
                     <div id="premium-status" class="premium-status">
                         FREE ACCOUNT
                     </div>
+
                     <div id="premium-until" class="premium-until">
                         Premium not active
                     </div>
