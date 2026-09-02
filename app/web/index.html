@@ -213,6 +213,112 @@
                     </div>
                 </div>
 
+                <div
+                    id="premium-admin-panel"
+                    class="section-card premium-admin-panel"
+                    style="display:none;"
+                >
+                    <h3>👑 Premium Admin</h3>
+
+                    <div
+                        id="premium-admin-status"
+                        class="premium-submit-status"
+                    ></div>
+
+                    <div id="premium-admin-requests">
+                        <div class="empty-mini">
+                            Loading premium requests...
+                        </div>
+                    </div>
+                </div>
+
+                <div class="section-card premium-buy-card">
+                    <h3>⭐ Buy Premium</h3>
+
+                    <div class="premium-info">
+                        <p>💳 Transfer your payment using the method below.</p>
+                        <p>🧾 After payment, upload your receipt screenshot.</p>
+                        <p>👑 Premium duration is manually confirmed by the owner.</p>
+                    </div>
+
+                    <label class="premium-label">
+                        Amount (MMK)
+                    </label>
+
+                    <input
+                        id="premium-amount"
+                        class="premium-input"
+                        type="number"
+                        min="1"
+                        step="1"
+                        value="15000"
+                        placeholder="Enter transferred amount"
+                    >
+
+                    <label class="premium-label">
+                        Payment Method
+                    </label>
+
+                    <select
+                        id="premium-payment-method"
+                        class="premium-input"
+                    >
+                        <option value="">Select payment method</option>
+                        <option value="KBZ Pay">KBZ Pay</option>
+                        <option value="Wave Money">Wave Money</option>
+                        <option value="Bank Transfer">Bank Transfer</option>
+                        <option value="Other">Other</option>
+                    </select>
+
+                    <div class="premium-payment-box">
+                        <strong>💰 Premium Payment</strong>
+                        <p>💵 Premium Price: <strong>15,000 MMK</strong></p>
+                        <p>💳 Payment: <strong>KBZ Pay</strong></p>
+                        <p>📱 Number: <strong>09677572146</strong></p>
+                        <p>🧾 Transfer 15,000 MMK, then upload your receipt screenshot.</p>
+                        <p>👑 Premium duration is manually confirmed by the owner.</p>
+                    </div>
+
+                    <label class="premium-label">
+                        Payment Receipt
+                    </label>
+
+                    <input
+                        id="premium-receipt"
+                        class="premium-file"
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp"
+                    >
+
+                    <small class="premium-file-help">
+                        JPG, PNG or WEBP • Maximum 3 MB
+                    </small>
+
+                    <label class="premium-label">
+                        Note (optional)
+                    </label>
+
+                    <textarea
+                        id="premium-note"
+                        class="premium-input premium-textarea"
+                        maxlength="1000"
+                        placeholder="Optional payment note"
+                    ></textarea>
+
+                    <button
+                        id="premium-submit"
+                        class="premium-submit-btn"
+                        type="button"
+                    >
+                        📤 Submit Premium Request
+                    </button>
+
+                    <div
+                        id="premium-submit-status"
+                        class="premium-submit-status"
+                    ></div>
+                </div>
+
                 <div class="section-card">
                     <h3>⭐ Premium Requests</h3>
                     <div id="premium-requests">
