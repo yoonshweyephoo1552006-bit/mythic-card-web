@@ -1503,6 +1503,12 @@ async function viewPremiumReceipt(requestId) {
 
     try {
         console.log("Premium receipt request:", receiptUrl);
+        console.log("Premium receipt initData:", {
+            hasInitData: Boolean(getInitData()),
+            initDataLength: getInitData().length,
+            hostname: window.location.hostname,
+            apiBase: API_BASE
+        });
 
         const response = await fetch(
             receiptUrl,
