@@ -1006,8 +1006,23 @@ class Handler(BaseHTTPRequestHandler):
             return None, error
 
         telegram_id = int(telegram_user["id"])
+        username = telegram_user.get("username")
+        first_name = telegram_user.get("first_name") or "Player"
 
         with get_db() as db:
+            # Auto-register verified Telegram users.
+            db.execute(
+                """
+                INSERT INTO users
+                    (telegram_id, username, first_name)
+                VALUES (?, ?, ?)
+                ON CONFLICT(telegram_id) DO UPDATE SET
+                    username = excluded.username,
+                    first_name = excluded.first_name
+                """,
+                (telegram_id, username, first_name)
+            )
+
             row = db.execute("""
                 SELECT *
                 FROM users
@@ -1015,7 +1030,7 @@ class Handler(BaseHTTPRequestHandler):
             """, (telegram_id,)).fetchone()
 
         if not row:
-            return None, "Telegram user is not registered"
+            return None, "Unable to create Telegram user"
 
         return row, None
 
@@ -1419,6 +1434,23 @@ class Handler(BaseHTTPRequestHandler):
             )
 
             with get_db() as db:
+                # Make sure the verified Telegram user exists.
+                db.execute(
+                    """
+                    INSERT INTO users
+                        (telegram_id, username, first_name)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(telegram_id) DO UPDATE SET
+                        username = excluded.username,
+                        first_name = excluded.first_name
+                    """,
+                    (
+                        telegram_id,
+                        telegram_user.get("username"),
+                        telegram_user.get("first_name") or "Player"
+                    )
+                )
+
                 user = db.execute("""
                     SELECT
                         id,
@@ -1431,8 +1463,8 @@ class Handler(BaseHTTPRequestHandler):
                 if not user:
                     return json_response(self, {
                         "ok": False,
-                        "error": "User is not registered"
-                    }, 401)
+                        "error": "Unable to create user"
+                    }, 500)
 
                 # Do not create multiple active pending requests.
                 existing = db.execute("""
