@@ -25,6 +25,7 @@ load_dotenv(BASE_DIR / ".env")
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 MYTHIC_WEBAPP_URL = "https://yoonshweyephoo1552006-bit.github.io/mythic-card-web/"
 MYTHIC_API_URL = "https://mythic-card-web-production.up.railway.app"
+CARD_SYNC_SECRET = os.getenv("CARD_SYNC_SECRET", "").strip()
 OWNER_ID_RAW = os.getenv("OWNER_ID", "").strip()
 
 try:
@@ -500,7 +501,12 @@ def owner_keyboard():
 
     return InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton(status, callback_data="owner_toggle_bot")],
+            [
+                InlineKeyboardButton(
+                    status,
+                    callback_data="owner_toggle_bot",
+                )
+            ],
             [
                 InlineKeyboardButton(
                     "🎴 OPEN MYTHIC CARD",
@@ -511,6 +517,12 @@ def owner_keyboard():
                 InlineKeyboardButton(
                     "📤 UPLOAD CARD",
                     callback_data="owner_upload_card",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🔄 REPLACE CARD",
+                    callback_data="owner_replace_card",
                 )
             ],
             [
@@ -821,6 +833,173 @@ async def owner_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
+
+def replace_card_keyboard():
+    with get_db() as db:
+        rows = db.execute(
+            """
+            SELECT id, card_code, name, rarity
+            FROM cards
+            WHERE is_active = 1
+            ORDER BY id
+            """
+        ).fetchall()
+
+    buttons = []
+
+    for row in rows:
+        rarity_text = RARITIES.get(
+            row["rarity"],
+            row["rarity"].upper(),
+        )
+
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    f"🔄 {row['card_code']} • {rarity_text}",
+                    callback_data=f"replace_select_{row['id']}",
+                )
+            ]
+        )
+
+    buttons.append(
+        [
+            InlineKeyboardButton(
+                "❌ CANCEL",
+                callback_data="replace_cancel",
+            )
+        ]
+    )
+
+    return InlineKeyboardMarkup(buttons)
+
+
+async def replace_card_photo_handler(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    if not update.effective_user or not update.message:
+        return
+
+    user = update.effective_user
+
+    if not is_owner(user.id):
+        return
+
+    card_id = context.user_data.get("replace_card_id")
+
+    if not card_id:
+        return
+
+    if not update.message.photo:
+        return
+
+    photo = update.message.photo[-1]
+
+    try:
+        with get_db() as db:
+            card = db.execute(
+                """
+                SELECT
+                    id,
+                    card_code,
+                    name,
+                    rarity,
+                    image_path
+                FROM cards
+                WHERE id = ? AND is_active = 1
+                LIMIT 1
+                """,
+                (card_id,),
+            ).fetchone()
+
+        if not card:
+            context.user_data.pop(
+                "replace_card_id",
+                None,
+            )
+
+            await update.message.reply_text(
+                "❌ Card မတွေ့ပါ။",
+                reply_markup=owner_keyboard(),
+            )
+            return
+
+        image_file = BASE_DIR / card["image_path"]
+
+        image_file.parent.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        # Download Telegram replacement to a temporary file first.
+        temp_file = image_file.with_suffix(
+            ".replace.tmp.jpg"
+        )
+
+        tg_file = await context.bot.get_file(
+            photo.file_id
+        )
+
+        await tg_file.download_to_drive(
+            custom_path=str(temp_file)
+        )
+
+        if not temp_file.exists():
+            raise RuntimeError(
+                "Replacement image was not downloaded."
+            )
+
+        # Sync replacement to Railway first.
+        await sync_replaced_card_to_web(
+            image_file=temp_file,
+            card_id=card["id"],
+        )
+
+        # Railway succeeded, now update local image.
+        temp_file.replace(image_file)
+
+        context.user_data.pop(
+            "replace_card_id",
+            None,
+        )
+
+        await update.message.reply_text(
+            "✅ CARD IMAGE REPLACED + WEBAPP SYNCED!\n\n"
+            f"🎴 {card['card_code']}\n"
+            f"🃏 {card['name']}\n"
+            f"🏷️ "
+            f"{RARITIES.get(card['rarity'], card['rarity'].upper())}\n\n"
+            "📸 Local image replaced.\n"
+            "🌐 Railway WebApp image replaced.\n"
+            "ℹ️ Card ID / Name / Rarity / Collection data "
+            "မပြောင်းပါ။",
+            reply_markup=owner_keyboard(),
+        )
+
+    except Exception as exc:
+        print(
+            f"❌ CARD IMAGE REPLACE/SYNC ERROR: "
+            f"{type(exc).__name__}: {exc}",
+            flush=True,
+        )
+
+        # Clean temporary file if it exists.
+        try:
+            if "temp_file" in locals() and temp_file.exists():
+                temp_file.unlink()
+        except Exception:
+            pass
+
+        await update.message.reply_text(
+            "❌ Image replace / WebApp sync failed.\n\n"
+            f"⚠️ {type(exc).__name__}: {exc}\n\n"
+            "ℹ️ Existing local image was kept unchanged.",
+            reply_markup=owner_keyboard(),
+        )
+
+
+
 async def owner_upload_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -909,6 +1088,10 @@ async def photo_handler(
     if not is_owner(user.id):
         return
 
+    if context.user_data.get("replace_card_id"):
+        await replace_card_photo_handler(update, context)
+        return
+
     rarity = context.user_data.get("upload_rarity")
 
     if not rarity:
@@ -994,6 +1177,100 @@ def upload_done_keyboard():
     )
 
 
+async def sync_card_to_web(
+    *,
+    image_file,
+    card_code,
+    name,
+    rarity,
+):
+    """
+    Upload one locally saved card image to Railway.
+    """
+    if not CARD_SYNC_SECRET:
+        raise RuntimeError(
+            "CARD_SYNC_SECRET is not configured"
+        )
+
+    image_bytes = Path(image_file).read_bytes()
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.post(
+            f"{MYTHIC_API_URL}/api/admin/card/upload",
+            params={
+                "card_code": card_code,
+                "name": name,
+                "rarity": rarity,
+            },
+            content=image_bytes,
+            headers={
+                "Content-Type": "image/jpeg",
+                "X-Card-Sync-Secret": CARD_SYNC_SECRET,
+            },
+        )
+
+        if response.status_code >= 400:
+            raise RuntimeError(
+                f"Railway sync failed "
+                f"({response.status_code}): "
+                f"{response.text[:500]}"
+            )
+
+        data = response.json()
+
+        if not data.get("ok"):
+            raise RuntimeError(
+                data.get("error", "Railway sync failed")
+            )
+
+        return data
+
+
+async def sync_replaced_card_to_web(
+    *,
+    image_file,
+    card_id,
+):
+    """
+    Replace an existing Railway card image.
+    """
+    if not CARD_SYNC_SECRET:
+        raise RuntimeError(
+            "CARD_SYNC_SECRET is not configured"
+        )
+
+    image_bytes = Path(image_file).read_bytes()
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.post(
+            f"{MYTHIC_API_URL}/api/admin/card/replace",
+            params={
+                "card_id": int(card_id),
+            },
+            content=image_bytes,
+            headers={
+                "Content-Type": "image/jpeg",
+                "X-Card-Sync-Secret": CARD_SYNC_SECRET,
+            },
+        )
+
+        if response.status_code >= 400:
+            raise RuntimeError(
+                f"Railway replace failed "
+                f"({response.status_code}): "
+                f"{response.text[:500]}"
+            )
+
+        data = response.json()
+
+        if not data.get("ok"):
+            raise RuntimeError(
+                data.get("error", "Railway replace failed")
+            )
+
+        return data
+
+
 async def save_pending_cards(
     query,
     context: ContextTypes.DEFAULT_TYPE,
@@ -1008,9 +1285,11 @@ async def save_pending_cards(
         )
         return
 
-    # Final safety check before committing the batch.
     total_limit = get_setting_int("total_card_limit", 1500)
-    rarity_limit = get_setting_int(f"{rarity}_card_limit", 0)
+    rarity_limit = get_setting_int(
+        f"{rarity}_card_limit",
+        0,
+    )
 
     current_total = get_card_count()
     current_rarity = get_card_count(rarity)
@@ -1022,21 +1301,27 @@ async def save_pending_cards(
         else remaining_total
     )
 
-    allowed_count = min(remaining_total, remaining_rarity)
+    allowed_count = min(
+        remaining_total,
+        remaining_rarity,
+    )
 
     if allowed_count <= 0:
         await query.edit_message_text(
-            f"❌ {RARITIES[rarity]} upload limit reached.\\n\\n"
-            f"📦 Total: {current_total}/{total_limit}\\n"
-            f"🏷️ Rarity: {current_rarity}/{rarity_limit if rarity_limit > 0 else '∞'}",
+            f"❌ {RARITIES[rarity]} upload limit reached.\n\n"
+            f"📦 Total: {current_total}/{total_limit}\n"
+            f"🏷️ Rarity: "
+            f"{current_rarity}/"
+            f"{rarity_limit if rarity_limit > 0 else '∞'}",
             reply_markup=owner_keyboard(),
         )
         return
 
     if len(pending) > allowed_count:
         await query.edit_message_text(
-            f"❌ Too many cards in this batch.\\n\\n"
-            f"📦 You can save only {allowed_count} more card(s).\\n"
+            f"❌ Too many cards in this batch.\n\n"
+            f"📦 You can save only "
+            f"{allowed_count} more card(s).\n"
             f"🖼️ Pending: {len(pending)}",
             reply_markup=owner_keyboard(),
         )
@@ -1049,8 +1334,12 @@ async def save_pending_cards(
 
     saved = 0
     failed = 0
+    web_synced = 0
 
     for file_id in pending:
+        card_id = None
+        image_path = None
+
         try:
             with get_db() as db:
                 next_row = db.execute(
@@ -1073,14 +1362,16 @@ async def save_pending_cards(
                 db.execute(
                     """
                     INSERT INTO cards
-                        (card_code, name, rarity, image_path)
+                    (card_code, name, rarity, image_path)
                     VALUES (?, ?, ?, ?)
                     """,
                     (
                         card_code,
                         card_name,
                         rarity,
-                        str(image_path.relative_to(BASE_DIR)),
+                        str(
+                            image_path.relative_to(BASE_DIR)
+                        ),
                     ),
                 )
 
@@ -1094,19 +1385,48 @@ async def save_pending_cards(
                 custom_path=str(image_path)
             )
 
-            saved += 1
+            if not image_path.exists():
+                raise RuntimeError(
+                    "Telegram image was not saved locally."
+                )
 
-        except Exception:
+            # Sync the exact same image to Railway.
+            await sync_card_to_web(
+                image_file=image_path,
+                card_code=card_code,
+                name=card_name,
+                rarity=rarity,
+            )
+
+            saved += 1
+            web_synced += 1
+
+        except Exception as exc:
             failed += 1
 
-            try:
-                with get_db() as db:
-                    db.execute(
-                        "DELETE FROM cards WHERE id = ?",
-                        (card_id,),
-                    )
-            except Exception:
-                pass
+            print(
+                f"❌ CARD UPLOAD/SYNC ERROR: "
+                f"{type(exc).__name__}: {exc}",
+                flush=True,
+            )
+
+            # Roll back the local DB row if the Railway sync failed.
+            if card_id is not None:
+                try:
+                    with get_db() as db:
+                        db.execute(
+                            "DELETE FROM cards WHERE id = ?",
+                            (card_id,),
+                        )
+                except Exception:
+                    pass
+
+            if image_path is not None:
+                try:
+                    if image_path.exists():
+                        image_path.unlink()
+                except Exception:
+                    pass
 
     context.user_data.pop("upload_rarity", None)
     context.user_data.pop("pending_cards", None)
@@ -1115,8 +1435,9 @@ async def save_pending_cards(
         "✅ BATCH UPLOAD COMPLETE\n\n"
         f"🏷️ {RARITIES[rarity]}\n"
         f"🖼️ Saved: {saved}\n"
+        f"🌐 WebApp Synced: {web_synced}\n"
         f"❌ Failed: {failed}\n\n"
-        "📁 Cards saved successfully.",
+        "☁️ Railway WebApp sync completed.",
         reply_markup=owner_keyboard(),
     )
 
@@ -1161,6 +1482,95 @@ async def owner_callback(
             "ရွေးပြီးရင် အဲ့ Rarity ရဲ့ ပုံတွေကို "
             "အများကြီး ဆက်တိုက်ပို့နိုင်ပါတယ်။",
             reply_markup=rarity_keyboard(),
+        )
+        return
+
+    if query.data == "owner_replace_card":
+        context.user_data.pop("upload_rarity", None)
+        context.user_data.pop("pending_cards", None)
+        context.user_data.pop("replace_card_id", None)
+
+        with get_db() as db:
+            total = db.execute(
+                """
+                SELECT COUNT(*) AS total
+                FROM cards
+                WHERE is_active = 1
+                """
+            ).fetchone()["total"]
+
+        if not total:
+            await query.edit_message_text(
+                "❌ Active card မရှိသေးပါ။",
+                reply_markup=owner_keyboard(),
+            )
+            return
+
+        await query.edit_message_text(
+            "🔄 REPLACE CARD IMAGE\n\n"
+            f"🎴 Active Cards: {total}\n\n"
+            "ပုံအသစ်ပြောင်းချင်တဲ့ Card ကိုရွေးပါ။\n"
+            "Card ID / Name / Rarity / Collection data "
+            "မပြောင်းပါဘူး။",
+            reply_markup=replace_card_keyboard(),
+        )
+        return
+
+    if query.data.startswith("replace_select_"):
+        try:
+            card_id = int(
+                query.data.replace(
+                    "replace_select_",
+                    "",
+                    1,
+                )
+            )
+        except ValueError:
+            await query.edit_message_text(
+                "❌ Invalid card.",
+                reply_markup=owner_keyboard(),
+            )
+            return
+
+        with get_db() as db:
+            card = db.execute(
+                """
+                SELECT id, card_code, name, rarity
+                FROM cards
+                WHERE id = ? AND is_active = 1
+                LIMIT 1
+                """,
+                (card_id,),
+            ).fetchone()
+
+        if not card:
+            await query.edit_message_text(
+                "❌ Card မတွေ့ပါ။",
+                reply_markup=replace_card_keyboard(),
+            )
+            return
+
+        context.user_data.pop("upload_rarity", None)
+        context.user_data.pop("pending_cards", None)
+        context.user_data["replace_card_id"] = card_id
+
+        await query.edit_message_text(
+            "🔄 READY TO REPLACE\n\n"
+            f"🎴 {card['card_code']}\n"
+            f"🃏 {card['name']}\n"
+            f"🏷️ {RARITIES.get(card['rarity'], card['rarity'].upper())}\n\n"
+            "📸 အခု ပုံအသစ် ၁ ပုံပို့ပါ။\n\n"
+            "⚠️ ဒီ Card ရဲ့ image ပဲ အစားထိုးမယ်။\n"
+            "Card data တွေ မပြောင်းပါဘူး။"
+        )
+        return
+
+    if query.data == "replace_cancel":
+        context.user_data.pop("replace_card_id", None)
+
+        await query.edit_message_text(
+            "❌ Card image replacement cancelled.",
+            reply_markup=owner_keyboard(),
         )
         return
 
@@ -1309,7 +1719,7 @@ def main():
     application.add_handler(
         CallbackQueryHandler(
             owner_callback,
-            pattern=r"^(owner_|upload_)",
+            pattern=r"^(owner_|upload_|replace_)",
         )
     )
 

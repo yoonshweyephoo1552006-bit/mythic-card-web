@@ -20,6 +20,7 @@ except Exception:
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 OWNER_ID = int(os.getenv("OWNER_ID", "0") or "0")
+CARD_SYNC_SECRET = os.getenv("CARD_SYNC_SECRET", "").strip()
 
 
 
@@ -93,6 +94,443 @@ def get_db():
     return db
 
 
+
+# ============================================================
+# DROP SYSTEM
+# ============================================================
+
+DROP_DEFAULT_INTERVAL_MINUTES = 10
+DROP_DEFAULT_DURATION_MINUTES = 2
+EPIC_DEFAULT_MONTHLY_LIMIT = 4
+
+
+def get_setting(db, key, default):
+    row = db.execute(
+        "SELECT value FROM app_settings WHERE key = ?",
+        (key,)
+    ).fetchone()
+
+    if not row:
+        return default
+
+    value = str(row["value"]).strip().strip("'\"")
+
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+
+def set_default_setting(db, key, value):
+    db.execute(
+        """
+        INSERT OR IGNORE INTO app_settings(key, value)
+        VALUES (?, ?)
+        """,
+        (key, str(value))
+    )
+
+
+def init_drop_settings():
+    with get_db() as db:
+        set_default_setting(
+            db,
+            "drop_interval_minutes",
+            DROP_DEFAULT_INTERVAL_MINUTES
+        )
+
+        set_default_setting(
+            db,
+            "drop_duration_minutes",
+            DROP_DEFAULT_DURATION_MINUTES
+        )
+
+        set_default_setting(
+            db,
+            "epic_monthly_limit",
+            EPIC_DEFAULT_MONTHLY_LIMIT
+        )
+
+        db.commit()
+
+
+def create_automatic_normal_drop():
+    """
+    Create one automatic Normal drop.
+
+    Eligible rarities:
+        common / uncommon / rare
+
+    Epic cards are handled by the separate
+    monthly Epic system.
+
+    Duplicate ownership is allowed by the collections table.
+    Legendary and Mythic are excluded because they are owner-drop only.
+    """
+
+    now = datetime.now(timezone.utc)
+
+    with get_db() as db:
+        # Expire old drops first.
+        db.execute(
+            """
+            UPDATE drops
+            SET status = 'expired'
+            WHERE status = 'active'
+              AND expires_at <= ?
+            """,
+            (now.isoformat(),)
+        )
+
+        # Never create a second active drop.
+        active = db.execute(
+            """
+            SELECT id
+            FROM drops
+            WHERE status = 'active'
+            LIMIT 1
+            """
+        ).fetchone()
+
+        if active:
+            return None
+
+        duration_minutes = get_setting(
+            db,
+            "drop_duration_minutes",
+            DROP_DEFAULT_DURATION_MINUTES
+        )
+
+        card = db.execute(
+            """
+            SELECT id, card_code, name, rarity, image_path
+            FROM cards
+            WHERE is_active = 1
+              AND rarity IN (
+                  'common',
+                  'uncommon',
+                  'rare'
+              )
+            ORDER BY RANDOM()
+            LIMIT 1
+            """
+        ).fetchone()
+
+        if not card:
+            return None
+
+        expires = now + timedelta(
+            minutes=max(1, duration_minutes)
+        )
+
+        cursor = db.execute(
+            """
+            INSERT INTO drops(
+                card_id,
+                started_at,
+                expires_at,
+                status
+            )
+            VALUES (?, ?, ?, 'active')
+            """,
+            (
+                card["id"],
+                now.isoformat(),
+                expires.isoformat()
+            )
+        )
+
+        db.commit()
+
+        return {
+            "id": cursor.lastrowid,
+            "card_id": card["id"],
+            "card_code": card["card_code"],
+            "name": card["name"],
+            "rarity": card["rarity"],
+            "image_path": card["image_path"],
+            "started_at": now.isoformat(),
+            "expires_at": expires.isoformat(),
+        }
+
+
+
+def get_text_setting(db, key, default=""):
+    row = db.execute(
+        "SELECT value FROM app_settings WHERE key = ?",
+        (key,)
+    ).fetchone()
+
+    if not row:
+        return default
+
+    return str(row["value"]).strip().strip("'\"")
+
+
+def set_setting_value(db, key, value):
+    db.execute(
+        """
+        INSERT INTO app_settings(key, value)
+        VALUES (?, ?)
+        ON CONFLICT(key)
+        DO UPDATE SET value = excluded.value
+        """,
+        (key, str(value))
+    )
+
+
+def prepare_epic_month(db, now):
+    """
+    Reset Epic monthly state when a new calendar month starts.
+    """
+
+    month_key = now.strftime("%Y-%m")
+    saved_month = get_text_setting(
+        db,
+        "epic_month",
+        ""
+    )
+
+    if saved_month != month_key:
+        set_setting_value(
+            db,
+            "epic_month",
+            month_key
+        )
+
+        set_setting_value(
+            db,
+            "monthly_epic_claimed",
+            0
+        )
+
+        set_setting_value(
+            db,
+            "epic_current_card_id",
+            0
+        )
+
+    return month_key
+
+
+def create_automatic_epic_drop():
+    """
+    Create an automatic Epic drop when the current month's
+    successful Epic catches are below the configured limit.
+
+    If an Epic drop expires without being caught, the same
+    Epic card is retained and can be dropped again.
+    """
+
+    now = datetime.now(timezone.utc)
+
+    with get_db() as db:
+        prepare_epic_month(db, now)
+
+        monthly_limit = get_setting(
+            db,
+            "epic_monthly_limit",
+            EPIC_DEFAULT_MONTHLY_LIMIT
+        )
+
+        claimed = get_setting(
+            db,
+            "monthly_epic_claimed",
+            0
+        )
+
+        if claimed >= monthly_limit:
+            return None
+
+        # Never allow two active drops at once.
+        active = db.execute(
+            """
+            SELECT id
+            FROM drops
+            WHERE status = 'active'
+            LIMIT 1
+            """
+        ).fetchone()
+
+        if active:
+            return None
+
+        # Expired drops are no longer active.
+        db.execute(
+            """
+            UPDATE drops
+            SET status = 'expired'
+            WHERE status = 'active'
+              AND expires_at <= ?
+            """,
+            (now.isoformat(),)
+        )
+
+        current_card_id = get_setting(
+            db,
+            "epic_current_card_id",
+            0
+        )
+
+        card = None
+
+        # Retry the same Epic card if the previous Epic
+        # drop was not caught.
+        if current_card_id > 0:
+            card = db.execute(
+                """
+                SELECT id, card_code, name, rarity, image_path
+                FROM cards
+                WHERE id = ?
+                  AND is_active = 1
+                  AND rarity = 'epic'
+                LIMIT 1
+                """,
+                (current_card_id,)
+            ).fetchone()
+
+        # No current Epic card means this is a new Epic slot.
+        if not card:
+            card = db.execute(
+                """
+                SELECT id, card_code, name, rarity, image_path
+                FROM cards
+                WHERE is_active = 1
+                  AND rarity = 'epic'
+                ORDER BY RANDOM()
+                LIMIT 1
+                """
+            ).fetchone()
+
+            if not card:
+                return None
+
+            set_setting_value(
+                db,
+                "epic_current_card_id",
+                card["id"]
+            )
+
+        duration_minutes = get_setting(
+            db,
+            "drop_duration_minutes",
+            DROP_DEFAULT_DURATION_MINUTES
+        )
+
+        expires = now + timedelta(
+            minutes=max(1, duration_minutes)
+        )
+
+        cursor = db.execute(
+            """
+            INSERT INTO drops(
+                card_id,
+                started_at,
+                expires_at,
+                status
+            )
+            VALUES (?, ?, ?, 'active')
+            """,
+            (
+                card["id"],
+                now.isoformat(),
+                expires.isoformat()
+            )
+        )
+
+        db.commit()
+
+        return {
+            "id": cursor.lastrowid,
+            "card_id": card["id"],
+            "card_code": card["card_code"],
+            "name": card["name"],
+            "rarity": card["rarity"],
+            "image_path": card["image_path"],
+            "started_at": now.isoformat(),
+            "expires_at": expires.isoformat(),
+        }
+
+
+
+def run_drop_scheduler():
+    """
+    Background drop scheduler.
+
+    Priority:
+        1. Epic monthly system
+        2. Normal common/uncommon/rare system
+
+    Only one active drop is allowed at a time.
+    The scheduler checks once per configured Normal interval.
+    """
+
+    import threading
+    import time
+
+    def worker():
+        print("[DROP] Automatic drop scheduler started")
+
+        while True:
+            try:
+                with get_db() as db:
+                    interval_minutes = get_setting(
+                        db,
+                        "drop_interval_minutes",
+                        DROP_DEFAULT_INTERVAL_MINUTES
+                    )
+
+                interval_seconds = max(
+                    60,
+                    interval_minutes * 60
+                )
+
+                time.sleep(interval_seconds)
+
+                # Epic gets priority so the monthly Epic system
+                # cannot be starved by Normal drops.
+                epic_drop = create_automatic_epic_drop()
+
+                if epic_drop:
+                    print(
+                        "[DROP] Epic drop created: "
+                        f'{epic_drop["card_code"]}'
+                    )
+                    continue
+
+                # If no Epic drop is needed/possible, create
+                # the regular Normal drop.
+                normal_drop = create_automatic_normal_drop()
+
+                if normal_drop:
+                    print(
+                        "[DROP] Normal drop created: "
+                        f'{normal_drop["card_code"]} '
+                        f'({normal_drop["rarity"]})'
+                    )
+                else:
+                    print(
+                        "[DROP] Normal drop skipped "
+                        "(active drop or no eligible card)"
+                    )
+
+            except Exception as exc:
+                print(
+                    f"[DROP] Scheduler error: {exc}"
+                )
+
+                # Prevent a broken scheduler from spinning
+                # continuously and consuming CPU.
+                time.sleep(60)
+
+    thread = threading.Thread(
+        target=worker,
+        name="mythic-drop-scheduler",
+        daemon=True
+    )
+    thread.start()
+
+
 def json_response(handler, data, status=200):
     body = json.dumps(data, ensure_ascii=False).encode("utf-8")
 
@@ -113,7 +551,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Telegram-Init-Data")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Telegram-Init-Data, X-Card-Sync-Secret")
         self.end_headers()
 
     def seed_test_card(self):
@@ -207,6 +645,12 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/admin/drop":
             return self.admin_drop()
 
+        if path == "/api/admin/card/upload":
+            return self.admin_card_upload()
+
+        if path == "/api/admin/card/replace":
+            return self.admin_card_replace()
+
         if path == "/api/premium/request":
             return self.premium_request()
 
@@ -216,11 +660,302 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/admin/premium/reject":
             return self.admin_premium_reject()
 
+        if path == "/api/trade/create":
+            return self.trade_create()
+
+        if path == "/api/trade/accept":
+            return self.trade_accept()
+
+        if path == "/api/trade/reject":
+            return self.trade_reject()
+
+        if path == "/api/trade/cancel":
+            return self.trade_cancel()
+
         return json_response(self, {
             "ok": False,
             "error": "Not found"
         }, 404)
 
+
+
+    def _card_sync_authorized(self):
+        """
+        Authenticate Bot -> Railway card synchronization.
+        Uses a private CARD_SYNC_SECRET instead of Telegram WebApp initData.
+        """
+        if not CARD_SYNC_SECRET:
+            return False
+
+        received = self.headers.get("X-Card-Sync-Secret", "").strip()
+
+        return bool(
+            received
+            and hmac.compare_digest(received, CARD_SYNC_SECRET)
+        )
+
+
+    def _read_request_body(self):
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except (TypeError, ValueError):
+            length = 0
+
+        if length <= 0:
+            return b""
+
+        # Safety limit: 15 MB per card image.
+        if length > 15 * 1024 * 1024:
+            return None
+
+        return self.rfile.read(length)
+
+
+    def _valid_card_rarity(self, rarity):
+        return rarity in {
+            "common",
+            "uncommon",
+            "rare",
+            "epic",
+            "legendary",
+            "mythic",
+        }
+
+
+    def _safe_card_code(self, card_code):
+        if not card_code:
+            return False
+
+        allowed = set(
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+            "abcdefghijklmnopqrstuvwxyz"
+            "0123456789-_"
+        )
+
+        return (
+            len(card_code) <= 64
+            and all(ch in allowed for ch in card_code)
+        )
+
+
+    def admin_card_upload(self):
+        if not self._card_sync_authorized():
+            return json_response(self, {
+                "ok": False,
+                "error": "Card sync authorization failed"
+            }, 403)
+
+        try:
+            query = dict(parse_qsl(
+                urlparse(self.path).query,
+                keep_blank_values=True
+            ))
+
+            card_code = query.get("card_code", "").strip()
+            name = query.get("name", "").strip()
+            rarity = query.get("rarity", "").strip().lower()
+
+            if not self._safe_card_code(card_code):
+                return json_response(self, {
+                    "ok": False,
+                    "error": "Invalid card_code"
+                }, 400)
+
+            if not self._valid_card_rarity(rarity):
+                return json_response(self, {
+                    "ok": False,
+                    "error": "Invalid rarity"
+                }, 400)
+
+            if not name:
+                name = card_code
+
+            body = self._read_request_body()
+
+            if body is None:
+                return json_response(self, {
+                    "ok": False,
+                    "error": "Image too large"
+                }, 413)
+
+            if not body:
+                return json_response(self, {
+                    "ok": False,
+                    "error": "Image body is empty"
+                }, 400)
+
+            cards_dir = BASE_DIR / "assets" / "cards" / rarity
+            cards_dir.mkdir(parents=True, exist_ok=True)
+
+            image_path = cards_dir / f"{card_code}.jpg"
+            relative_path = str(
+                image_path.relative_to(BASE_DIR)
+            )
+
+            image_path.write_bytes(body)
+
+            with get_db() as db:
+                existing = db.execute(
+                    """
+                    SELECT id
+                    FROM cards
+                    WHERE card_code = ?
+                    LIMIT 1
+                    """,
+                    (card_code,)
+                ).fetchone()
+
+                if existing:
+                    db.execute(
+                        """
+                        UPDATE cards
+                        SET name = ?,
+                            rarity = ?,
+                            image_path = ?,
+                            is_active = 1
+                        WHERE id = ?
+                        """,
+                        (
+                            name,
+                            rarity,
+                            relative_path,
+                            existing["id"],
+                        )
+                    )
+                    card_id = existing["id"]
+                else:
+                    cur = db.execute(
+                        """
+                        INSERT INTO cards
+                        (card_code, name, rarity, image_path, is_active)
+                        VALUES (?, ?, ?, ?, 1)
+                        """,
+                        (
+                            card_code,
+                            name,
+                            rarity,
+                            relative_path,
+                        )
+                    )
+                    card_id = cur.lastrowid
+
+                db.commit()
+
+            return json_response(self, {
+                "ok": True,
+                "action": "upload",
+                "card": {
+                    "id": card_id,
+                    "card_code": card_code,
+                    "name": name,
+                    "rarity": rarity,
+                    "image_path": relative_path,
+                }
+            }, 201)
+
+        except Exception as exc:
+            print("[CARD SYNC UPLOAD ERROR]", repr(exc), flush=True)
+
+            return json_response(self, {
+                "ok": False,
+                "error": str(exc)
+            }, 500)
+
+
+    def admin_card_replace(self):
+        if not self._card_sync_authorized():
+            return json_response(self, {
+                "ok": False,
+                "error": "Card sync authorization failed"
+            }, 403)
+
+        try:
+            query = dict(parse_qsl(
+                urlparse(self.path).query,
+                keep_blank_values=True
+            ))
+
+            card_id = int(query.get("card_id", "0"))
+
+            if card_id <= 0:
+                return json_response(self, {
+                    "ok": False,
+                    "error": "Invalid card_id"
+                }, 400)
+
+            body = self._read_request_body()
+
+            if body is None:
+                return json_response(self, {
+                    "ok": False,
+                    "error": "Image too large"
+                }, 413)
+
+            if not body:
+                return json_response(self, {
+                    "ok": False,
+                    "error": "Image body is empty"
+                }, 400)
+
+            with get_db() as db:
+                card = db.execute(
+                    """
+                    SELECT id, card_code, name, rarity, image_path
+                    FROM cards
+                    WHERE id = ? AND is_active = 1
+                    LIMIT 1
+                    """,
+                    (card_id,)
+                ).fetchone()
+
+                if not card:
+                    return json_response(self, {
+                        "ok": False,
+                        "error": "Card not found"
+                    }, 404)
+
+                image_path = (
+                    BASE_DIR / card["image_path"]
+                ).resolve()
+
+                assets_root = (
+                    BASE_DIR / "assets"
+                ).resolve()
+
+                if not str(image_path).startswith(
+                    str(assets_root) + "/"
+                ):
+                    return json_response(self, {
+                        "ok": False,
+                        "error": "Invalid image path"
+                    }, 400)
+
+                image_path.parent.mkdir(
+                    parents=True,
+                    exist_ok=True
+                )
+
+                image_path.write_bytes(body)
+
+            return json_response(self, {
+                "ok": True,
+                "action": "replace",
+                "card": {
+                    "id": card["id"],
+                    "card_code": card["card_code"],
+                    "name": card["name"],
+                    "rarity": card["rarity"],
+                    "image_path": card["image_path"],
+                }
+            })
+
+        except Exception as exc:
+            print("[CARD SYNC REPLACE ERROR]", repr(exc), flush=True)
+
+            return json_response(self, {
+                "ok": False,
+                "error": str(exc)
+            }, 500)
 
 
     def _admin_authorized(self):
@@ -956,6 +1691,62 @@ class Handler(BaseHTTPRequestHandler):
                     )
                 )
 
+                # Epic monthly claim tracking.
+                #
+                # Only the atomic winner reaches this point.
+                # Therefore each successful Epic catch counts
+                # exactly once.
+                if drop["rarity"] == "epic":
+                    current_month = datetime.now(
+                        timezone.utc
+                    ).strftime("%Y-%m")
+
+                    saved_month = get_text_setting(
+                        db,
+                        "epic_month",
+                        ""
+                    )
+
+                    if saved_month != current_month:
+                        set_setting_value(
+                            db,
+                            "epic_month",
+                            current_month
+                        )
+
+                        set_setting_value(
+                            db,
+                            "monthly_epic_claimed",
+                            0
+                        )
+
+                    claimed = get_setting(
+                        db,
+                        "monthly_epic_claimed",
+                        0
+                    )
+
+                    monthly_limit = get_setting(
+                        db,
+                        "epic_monthly_limit",
+                        EPIC_DEFAULT_MONTHLY_LIMIT
+                    )
+
+                    if claimed < monthly_limit:
+                        set_setting_value(
+                            db,
+                            "monthly_epic_claimed",
+                            claimed + 1
+                        )
+
+                    # This Epic slot has been successfully caught.
+                    # The next Epic slot may select a new card.
+                    set_setting_value(
+                        db,
+                        "epic_current_card_id",
+                        0
+                    )
+
             return json_response(self, {
                 "ok": True,
                 "message": "Card caught successfully",
@@ -1211,10 +2002,38 @@ class Handler(BaseHTTPRequestHandler):
                         t.offered_card_id,
                         t.requested_card_id,
                         t.status,
-                        t.created_at
+                        t.created_at,
+
+                        fu.username AS from_username,
+                        fu.first_name AS from_first_name,
+                        tu.username AS to_username,
+                        tu.first_name AS to_first_name,
+
+                        oc.card_code AS offered_card_code,
+                        oc.name AS offered_card_name,
+                        oc.rarity AS offered_rarity,
+
+                        rc.card_code AS requested_card_code,
+                        rc.name AS requested_card_name,
+                        rc.rarity AS requested_rarity
+
                     FROM trades t
+
+                    JOIN users fu
+                      ON fu.id = t.from_user_id
+
+                    JOIN users tu
+                      ON tu.id = t.to_user_id
+
+                    JOIN cards oc
+                      ON oc.id = t.offered_card_id
+
+                    LEFT JOIN cards rc
+                      ON rc.id = t.requested_card_id
+
                     WHERE t.from_user_id = ?
                        OR t.to_user_id = ?
+
                     ORDER BY t.id DESC
                 """, (
                     user["id"],
@@ -1224,6 +2043,734 @@ class Handler(BaseHTTPRequestHandler):
             return json_response(self, {
                 "ok": True,
                 "trades": [dict(row) for row in rows]
+            })
+
+        except Exception as e:
+            return json_response(self, {
+                "ok": False,
+                "error": str(e)
+            }, 500)
+
+
+    def _trade_json(self):
+        length = int(
+            self.headers.get("Content-Length", "0")
+        )
+
+        if length <= 0 or length > 100_000:
+            return None, json_response(self, {
+                "ok": False,
+                "error": "Invalid request body"
+            }, 400)
+
+        try:
+            raw = self.rfile.read(length)
+            payload = json.loads(
+                raw.decode("utf-8")
+            )
+        except Exception:
+            return None, json_response(self, {
+                "ok": False,
+                "error": "Invalid JSON"
+            }, 400)
+
+        if not isinstance(payload, dict):
+            return None, json_response(self, {
+                "ok": False,
+                "error": "Invalid request payload"
+            }, 400)
+
+        return payload, None
+
+
+    def trade_create(self):
+        payload, error_response = self._trade_json()
+
+        if error_response:
+            return error_response
+
+        user, error = self._get_authenticated_user()
+
+        if error:
+            return json_response(self, {
+                "ok": False,
+                "error": error
+            }, 401)
+
+        try:
+            target_telegram_id = int(
+                payload.get("to_user_id")
+            )
+
+            offered_card_id = int(
+                payload.get("offered_card_id")
+            )
+
+            requested_card_id = int(
+                payload.get("requested_card_id")
+            )
+
+        except (TypeError, ValueError):
+            return json_response(self, {
+                "ok": False,
+                "error": "Invalid trade data"
+            }, 400)
+
+        if target_telegram_id == int(
+            user["telegram_id"]
+        ):
+            return json_response(self, {
+                "ok": False,
+                "error": "You cannot trade with yourself"
+            }, 400)
+
+        if offered_card_id == requested_card_id:
+            return json_response(self, {
+                "ok": False,
+                "error": "You cannot trade the same card"
+            }, 400)
+
+        try:
+            with get_db() as db:
+                sender = db.execute("""
+                    SELECT id
+                    FROM users
+                    WHERE id = ?
+                    LIMIT 1
+                """, (
+                    user["id"],
+                )).fetchone()
+
+                receiver = db.execute("""
+                    SELECT id, telegram_id
+                    FROM users
+                    WHERE telegram_id = ?
+                    LIMIT 1
+                """, (
+                    target_telegram_id,
+                )).fetchone()
+
+                if not sender:
+                    return json_response(self, {
+                        "ok": False,
+                        "error": "Sender not found"
+                    }, 404)
+
+                if not receiver:
+                    return json_response(self, {
+                        "ok": False,
+                        "error": "Target Telegram user not found"
+                    }, 404)
+
+                to_user_id = int(
+                    receiver["id"]
+                )
+
+                if to_user_id == user["id"]:
+                    return json_response(self, {
+                        "ok": False,
+                        "error": "You cannot trade with yourself"
+                    }, 400)
+
+                offered = db.execute("""
+                    SELECT
+                        id,
+                        card_code,
+                        name,
+                        rarity,
+                        is_active
+                    FROM cards
+                    WHERE id = ?
+                    LIMIT 1
+                """, (
+                    offered_card_id,
+                )).fetchone()
+
+                requested = db.execute("""
+                    SELECT
+                        id,
+                        card_code,
+                        name,
+                        rarity,
+                        is_active
+                    FROM cards
+                    WHERE id = ?
+                    LIMIT 1
+                """, (
+                    requested_card_id,
+                )).fetchone()
+
+                if not offered or not offered["is_active"]:
+                    return json_response(self, {
+                        "ok": False,
+                        "error": "Offered card not found"
+                    }, 404)
+
+                if not requested or not requested["is_active"]:
+                    return json_response(self, {
+                        "ok": False,
+                        "error": "Requested card not found"
+                    }, 404)
+
+                if offered["rarity"] != requested["rarity"]:
+                    return json_response(self, {
+                        "ok": False,
+                        "error": (
+                            "Trade requires cards of the same rarity"
+                        )
+                    }, 400)
+
+                ownership = db.execute("""
+                    SELECT quantity
+                    FROM collections
+                    WHERE user_id = ?
+                      AND card_id = ?
+                    LIMIT 1
+                """, (
+                    user["id"],
+                    offered_card_id
+                )).fetchone()
+
+                if not ownership or int(
+                    ownership["quantity"] or 0
+                ) < 1:
+                    return json_response(self, {
+                        "ok": False,
+                        "error": "You do not own the offered card"
+                    }, 400)
+
+                target_ownership = db.execute("""
+                    SELECT quantity
+                    FROM collections
+                    WHERE user_id = ?
+                      AND card_id = ?
+                    LIMIT 1
+                """, (
+                    to_user_id,
+                    requested_card_id
+                )).fetchone()
+
+                if not target_ownership or int(
+                    target_ownership["quantity"] or 0
+                ) < 1:
+                    return json_response(self, {
+                        "ok": False,
+                        "error": (
+                            "Target user does not own "
+                            "the requested card"
+                        )
+                    }, 400)
+
+                cursor = db.execute("""
+                    INSERT INTO trades(
+                        from_user_id,
+                        to_user_id,
+                        offered_card_id,
+                        requested_card_id,
+                        status
+                    )
+                    VALUES (?, ?, ?, ?, 'pending')
+                """, (
+                    user["id"],
+                    to_user_id,
+                    offered_card_id,
+                    requested_card_id
+                ))
+
+                db.commit()
+
+                return json_response(self, {
+                    "ok": True,
+                    "trade": {
+                        "id": cursor.lastrowid,
+                        "status": "pending",
+                        "from_user_id": user["id"],
+                        "to_user_id": to_user_id,
+                        "offered_card_id": offered_card_id,
+                        "requested_card_id": requested_card_id,
+                        "rarity": offered["rarity"]
+                    }
+                }, 201)
+
+        except Exception as e:
+            return json_response(self, {
+                "ok": False,
+                "error": str(e)
+            }, 500)
+
+
+    def _trade_change_quantity(
+        self,
+        db,
+        user_id,
+        card_id,
+        delta
+    ):
+        row = db.execute("""
+            SELECT quantity
+            FROM collections
+            WHERE user_id = ?
+              AND card_id = ?
+            LIMIT 1
+        """, (
+            user_id,
+            card_id
+        )).fetchone()
+
+        current = int(
+            row["quantity"] if row else 0
+        )
+
+        new_quantity = current + delta
+
+        if new_quantity < 0:
+            return False
+
+        if new_quantity == 0:
+            db.execute("""
+                DELETE FROM collections
+                WHERE user_id = ?
+                  AND card_id = ?
+            """, (
+                user_id,
+                card_id
+            ))
+            return True
+
+        if row:
+            cursor = db.execute("""
+                UPDATE collections
+                SET quantity = ?
+                WHERE user_id = ?
+                  AND card_id = ?
+            """, (
+                new_quantity,
+                user_id,
+                card_id
+            ))
+
+            return cursor.rowcount == 1
+
+        db.execute("""
+            INSERT INTO collections(
+                user_id,
+                card_id,
+                quantity
+            )
+            VALUES (?, ?, ?)
+        """, (
+            user_id,
+            card_id,
+            new_quantity
+        ))
+
+        return True
+
+
+    def trade_accept(self):
+        payload, error_response = self._trade_json()
+
+        if error_response:
+            return error_response
+
+        user, error = self._get_authenticated_user()
+
+        if error:
+            return json_response(self, {
+                "ok": False,
+                "error": error
+            }, 401)
+
+        try:
+            trade_id = int(
+                payload.get("trade_id")
+            )
+        except (TypeError, ValueError):
+            return json_response(self, {
+                "ok": False,
+                "error": "Invalid trade ID"
+            }, 400)
+
+        try:
+            with get_db() as db:
+                db.execute("BEGIN IMMEDIATE")
+
+                trade = db.execute("""
+                    SELECT
+                        id,
+                        from_user_id,
+                        to_user_id,
+                        offered_card_id,
+                        requested_card_id,
+                        status
+                    FROM trades
+                    WHERE id = ?
+                    LIMIT 1
+                """, (
+                    trade_id,
+                )).fetchone()
+
+                if not trade:
+                    db.rollback()
+                    return json_response(self, {
+                        "ok": False,
+                        "error": "Trade not found"
+                    }, 404)
+
+                if trade["to_user_id"] != user["id"]:
+                    db.rollback()
+                    return json_response(self, {
+                        "ok": False,
+                        "error": (
+                            "Only the target user can "
+                            "accept this trade"
+                        )
+                    }, 403)
+
+                if trade["status"] != "pending":
+                    db.rollback()
+                    return json_response(self, {
+                        "ok": False,
+                        "error": "Trade is no longer pending"
+                    }, 409)
+
+                from_user_id = int(
+                    trade["from_user_id"]
+                )
+
+                to_user_id = int(
+                    trade["to_user_id"]
+                )
+
+                offered_card_id = int(
+                    trade["offered_card_id"]
+                )
+
+                requested_card_id = int(
+                    trade["requested_card_id"]
+                )
+
+                if from_user_id == to_user_id:
+                    db.rollback()
+                    return json_response(self, {
+                        "ok": False,
+                        "error": "Invalid self-trade"
+                    }, 400)
+
+                if offered_card_id == requested_card_id:
+                    db.rollback()
+                    return json_response(self, {
+                        "ok": False,
+                        "error": "Invalid same-card trade"
+                    }, 400)
+
+                cards = db.execute("""
+                    SELECT id, rarity, is_active
+                    FROM cards
+                    WHERE id IN (?, ?)
+                """, (
+                    offered_card_id,
+                    requested_card_id
+                )).fetchall()
+
+                if len(cards) != 2:
+                    db.rollback()
+                    return json_response(self, {
+                        "ok": False,
+                        "error": "Trade card not found"
+                    }, 404)
+
+                card_map = {
+                    int(row["id"]): row
+                    for row in cards
+                }
+
+                offered = card_map.get(
+                    offered_card_id
+                )
+
+                requested = card_map.get(
+                    requested_card_id
+                )
+
+                if not offered["is_active"] or not requested["is_active"]:
+                    db.rollback()
+                    return json_response(self, {
+                        "ok": False,
+                        "error": "One of the cards is inactive"
+                    }, 400)
+
+                if offered["rarity"] != requested["rarity"]:
+                    db.rollback()
+                    return json_response(self, {
+                        "ok": False,
+                        "error": (
+                            "Trade requires cards of "
+                            "the same rarity"
+                        )
+                    }, 400)
+
+                from_collection = db.execute("""
+                    SELECT quantity
+                    FROM collections
+                    WHERE user_id = ?
+                      AND card_id = ?
+                    LIMIT 1
+                """, (
+                    from_user_id,
+                    offered_card_id
+                )).fetchone()
+
+                to_collection = db.execute("""
+                    SELECT quantity
+                    FROM collections
+                    WHERE user_id = ?
+                      AND card_id = ?
+                    LIMIT 1
+                """, (
+                    to_user_id,
+                    requested_card_id
+                )).fetchone()
+
+                from_quantity = int(
+                    from_collection["quantity"]
+                    if from_collection else 0
+                )
+
+                to_quantity = int(
+                    to_collection["quantity"]
+                    if to_collection else 0
+                )
+
+                if from_quantity < 1:
+                    db.rollback()
+                    return json_response(self, {
+                        "ok": False,
+                        "error": (
+                            "Sender no longer owns "
+                            "the offered card"
+                        )
+                    }, 409)
+
+                if to_quantity < 1:
+                    db.rollback()
+                    return json_response(self, {
+                        "ok": False,
+                        "error": (
+                            "You no longer own "
+                            "the requested card"
+                        )
+                    }, 409)
+
+                # Remove one offered card from sender.
+                if not self._trade_change_quantity(
+                    db,
+                    from_user_id,
+                    offered_card_id,
+                    -1
+                ):
+                    db.rollback()
+                    return json_response(self, {
+                        "ok": False,
+                        "error": "Failed to remove offered card"
+                    }, 409)
+
+                # Remove one requested card from receiver.
+                if not self._trade_change_quantity(
+                    db,
+                    to_user_id,
+                    requested_card_id,
+                    -1
+                ):
+                    db.rollback()
+                    return json_response(self, {
+                        "ok": False,
+                        "error": "Failed to remove requested card"
+                    }, 409)
+
+                # Give offered card to receiver.
+                if not self._trade_change_quantity(
+                    db,
+                    to_user_id,
+                    offered_card_id,
+                    1
+                ):
+                    db.rollback()
+                    return json_response(self, {
+                        "ok": False,
+                        "error": "Failed to give offered card"
+                    }, 409)
+
+                # Give requested card to sender.
+                if not self._trade_change_quantity(
+                    db,
+                    from_user_id,
+                    requested_card_id,
+                    1
+                ):
+                    db.rollback()
+                    return json_response(self, {
+                        "ok": False,
+                        "error": "Failed to give requested card"
+                    }, 409)
+
+                cursor = db.execute("""
+                    UPDATE trades
+                    SET status = 'accepted'
+                    WHERE id = ?
+                      AND status = 'pending'
+                      AND to_user_id = ?
+                """, (
+                    trade_id,
+                    user["id"]
+                ))
+
+                if cursor.rowcount != 1:
+                    db.rollback()
+                    return json_response(self, {
+                        "ok": False,
+                        "error": "Trade was already processed"
+                    }, 409)
+
+                db.commit()
+
+                return json_response(self, {
+                    "ok": True,
+                    "trade": {
+                        "id": trade_id,
+                        "status": "accepted"
+                    }
+                })
+
+        except Exception as e:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+
+            return json_response(self, {
+                "ok": False,
+                "error": str(e)
+            }, 500)
+
+
+    def trade_reject(self):
+        payload, error_response = self._trade_json()
+
+        if error_response:
+            return error_response
+
+        user, error = self._get_authenticated_user()
+
+        if error:
+            return json_response(self, {
+                "ok": False,
+                "error": error
+            }, 401)
+
+        try:
+            trade_id = int(
+                payload.get("trade_id")
+            )
+        except (TypeError, ValueError):
+            return json_response(self, {
+                "ok": False,
+                "error": "Invalid trade ID"
+            }, 400)
+
+        try:
+            with get_db() as db:
+                cursor = db.execute("""
+                    UPDATE trades
+                    SET status = 'rejected'
+                    WHERE id = ?
+                      AND to_user_id = ?
+                      AND status = 'pending'
+                """, (
+                    trade_id,
+                    user["id"]
+                ))
+
+                if cursor.rowcount != 1:
+                    return json_response(self, {
+                        "ok": False,
+                        "error": (
+                            "Trade not found or "
+                            "already processed"
+                        )
+                    }, 409)
+
+                db.commit()
+
+            return json_response(self, {
+                "ok": True,
+                "trade": {
+                    "id": trade_id,
+                    "status": "rejected"
+                }
+            })
+
+        except Exception as e:
+            return json_response(self, {
+                "ok": False,
+                "error": str(e)
+            }, 500)
+
+
+    def trade_cancel(self):
+        payload, error_response = self._trade_json()
+
+        if error_response:
+            return error_response
+
+        user, error = self._get_authenticated_user()
+
+        if error:
+            return json_response(self, {
+                "ok": False,
+                "error": error
+            }, 401)
+
+        try:
+            trade_id = int(
+                payload.get("trade_id")
+            )
+        except (TypeError, ValueError):
+            return json_response(self, {
+                "ok": False,
+                "error": "Invalid trade ID"
+            }, 400)
+
+        try:
+            with get_db() as db:
+                cursor = db.execute("""
+                    UPDATE trades
+                    SET status = 'cancelled'
+                    WHERE id = ?
+                      AND from_user_id = ?
+                      AND status = 'pending'
+                """, (
+                    trade_id,
+                    user["id"]
+                ))
+
+                if cursor.rowcount != 1:
+                    return json_response(self, {
+                        "ok": False,
+                        "error": (
+                            "Trade not found or "
+                            "already processed"
+                        )
+                    }, 409)
+
+                db.commit()
+
+            return json_response(self, {
+                "ok": True,
+                "trade": {
+                    "id": trade_id,
+                    "status": "cancelled"
+                }
             })
 
         except Exception as e:
@@ -1735,6 +3282,9 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     init_db()
+    init_drop_settings()
+    run_drop_scheduler()
+
     host = "0.0.0.0"
     port = int(os.getenv("PORT", "8080"))
 
