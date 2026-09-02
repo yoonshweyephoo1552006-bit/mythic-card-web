@@ -1592,7 +1592,13 @@ async function viewPremiumReceipt(requestId) {
     } catch (error) {
         console.error(
             "Premium receipt error:",
-            error
+            error,
+            "name=",
+            error?.name,
+            "message=",
+            error?.message,
+            "stack=",
+            error?.stack
         );
 
         setPremiumAdminStatus(
