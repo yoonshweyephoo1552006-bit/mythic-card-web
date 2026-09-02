@@ -175,6 +175,12 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/premium":
             return self.premium()
 
+        if path == "/api/admin/premium":
+            return self.admin_premium()
+
+        if path == "/api/admin/premium/receipt":
+            return self.admin_premium_receipt()
+
         if path == "/" or path == "/index.html":
             return self.static_file("index.html")
 
@@ -204,10 +210,438 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/premium/request":
             return self.premium_request()
 
+        if path == "/api/admin/premium/approve":
+            return self.admin_premium_approve()
+
+        if path == "/api/admin/premium/reject":
+            return self.admin_premium_reject()
+
         return json_response(self, {
             "ok": False,
             "error": "Not found"
         }, 404)
+
+
+
+    def _admin_authorized(self):
+        """
+        Require a valid Telegram Web App session and the configured owner.
+        """
+        user, error = self._get_authenticated_user()
+
+        if error:
+            return None, error
+
+        telegram_id = int(user["telegram_id"])
+
+        if telegram_id != OWNER_ID:
+            return None, "Owner authorization required"
+
+        return user, None
+
+
+    def admin_premium(self):
+        try:
+            user, error = self._admin_authorized()
+
+            if error:
+                return json_response(self, {
+                    "ok": False,
+                    "error": error
+                }, 403)
+
+            with get_db() as db:
+                rows = db.execute("""
+                    SELECT
+                        pr.id,
+                        pr.user_id,
+                        u.telegram_id,
+                        u.username,
+                        u.first_name,
+                        pr.amount_mmk,
+                        pr.requested_days,
+                        pr.payment_method,
+                        pr.receipt_path,
+                        pr.receipt_note,
+                        pr.admin_note,
+                        pr.status,
+                        pr.created_at,
+                        pr.processed_at
+                    FROM premium_requests pr
+                    JOIN users u ON u.id = pr.user_id
+                    ORDER BY
+                        CASE WHEN pr.status = 'pending'
+                             THEN 0 ELSE 1 END,
+                        pr.id DESC
+                    LIMIT 100
+                """).fetchall()
+
+            return json_response(self, {
+                "ok": True,
+                "requests": [dict(row) for row in rows]
+            })
+
+        except Exception as e:
+            return json_response(self, {
+                "ok": False,
+                "error": str(e)
+            }, 500)
+
+
+    def admin_premium_receipt(self):
+        try:
+            user, error = self._admin_authorized()
+
+            if error:
+                return json_response(self, {
+                    "ok": False,
+                    "error": error
+                }, 403)
+
+            query = parse_qsl(
+                urlparse(self.path).query,
+                keep_blank_values=True
+            )
+            params = dict(query)
+
+            request_id = int(params.get("request_id", 0))
+
+            if request_id <= 0:
+                return json_response(self, {
+                    "ok": False,
+                    "error": "Invalid request_id"
+                }, 400)
+
+            with get_db() as db:
+                row = db.execute("""
+                    SELECT receipt_path
+                    FROM premium_requests
+                    WHERE id = ?
+                """, (request_id,)).fetchone()
+
+            if not row or not row["receipt_path"]:
+                return json_response(self, {
+                    "ok": False,
+                    "error": "Receipt not found"
+                }, 404)
+
+            receipt_path = Path(row["receipt_path"]).resolve()
+            upload_root = (BASE_DIR / "uploads" / "premium").resolve()
+
+            try:
+                receipt_path.relative_to(upload_root)
+            except ValueError:
+                return json_response(self, {
+                    "ok": False,
+                    "error": "Invalid receipt path"
+                }, 400)
+
+            if not receipt_path.is_file():
+                return json_response(self, {
+                    "ok": False,
+                    "error": "Receipt file not found"
+                }, 404)
+
+            data = receipt_path.read_bytes()
+
+            suffix = receipt_path.suffix.lower()
+
+            content_types = {
+                ".jpg": "image/jpeg",
+                ".jpeg": "image/jpeg",
+                ".png": "image/png",
+                ".webp": "image/webp"
+            }
+
+            content_type = content_types.get(
+                suffix,
+                "application/octet-stream"
+            )
+
+            self.send_response(200)
+            self.send_header(
+                "Content-Type",
+                content_type
+            )
+            self.send_header(
+                "Content-Length",
+                str(len(data))
+            )
+            self.send_header(
+                "Cache-Control",
+                "no-store"
+            )
+            self.end_headers()
+
+            self.wfile.write(data)
+
+        except (ValueError, TypeError):
+            return json_response(self, {
+                "ok": False,
+                "error": "Invalid request_id"
+            }, 400)
+
+        except Exception as e:
+            return json_response(self, {
+                "ok": False,
+                "error": str(e)
+            }, 500)
+
+
+    def admin_premium_approve(self):
+        try:
+            user, error = self._admin_authorized()
+
+            if error:
+                return json_response(self, {
+                    "ok": False,
+                    "error": error
+                }, 403)
+
+            length = int(
+                self.headers.get("Content-Length", "0")
+            )
+
+            if length <= 0 or length > 20_000:
+                return json_response(self, {
+                    "ok": False,
+                    "error": "Invalid request body"
+                }, 400)
+
+            payload = json.loads(
+                self.rfile.read(length).decode("utf-8")
+            )
+
+            request_id = int(
+                payload.get("request_id", 0)
+            )
+
+            days = int(
+                payload.get("days", 0)
+            )
+
+            admin_note = str(
+                payload.get("admin_note", "")
+            ).strip()[:1000]
+
+            if request_id <= 0:
+                return json_response(self, {
+                    "ok": False,
+                    "error": "Invalid request_id"
+                }, 400)
+
+            if days <= 0 or days > 3650:
+                return json_response(self, {
+                    "ok": False,
+                    "error": "Premium days must be between 1 and 3650"
+                }, 400)
+
+            now = datetime.now(timezone.utc)
+            now_text = now.isoformat()
+
+            with get_db() as db:
+                request = db.execute("""
+                    SELECT
+                        pr.id,
+                        pr.user_id,
+                        pr.status,
+                        u.premium_until
+                    FROM premium_requests pr
+                    JOIN users u ON u.id = pr.user_id
+                    WHERE pr.id = ?
+                """, (request_id,)).fetchone()
+
+                if not request:
+                    return json_response(self, {
+                        "ok": False,
+                        "error": "Premium request not found"
+                    }, 404)
+
+                if request["status"] != "pending":
+                    return json_response(self, {
+                        "ok": False,
+                        "error": "Premium request is already processed"
+                    }, 409)
+
+                base_time = now
+
+                existing_until = request["premium_until"]
+
+                if existing_until:
+                    try:
+                        parsed_until = datetime.fromisoformat(
+                            existing_until.replace("Z", "+00:00")
+                        )
+
+                        if parsed_until.tzinfo is None:
+                            parsed_until = parsed_until.replace(
+                                tzinfo=timezone.utc
+                            )
+
+                        if parsed_until > now:
+                            base_time = parsed_until
+
+                    except (ValueError, TypeError):
+                        pass
+
+                premium_until = (
+                    base_time + timedelta(days=days)
+                ).isoformat()
+
+                db.execute("""
+                    UPDATE users
+                    SET
+                        is_premium = 1,
+                        premium_until = ?
+                    WHERE id = ?
+                """, (
+                    premium_until,
+                    request["user_id"]
+                ))
+
+                db.execute("""
+                    UPDATE premium_requests
+                    SET
+                        requested_days = ?,
+                        status = 'approved',
+                        admin_note = ?,
+                        processed_at = ?
+                    WHERE id = ?
+                """, (
+                    days,
+                    admin_note,
+                    now_text,
+                    request_id
+                ))
+
+            return json_response(self, {
+                "ok": True,
+                "message": "Premium approved",
+                "request_id": request_id,
+                "days": days,
+                "premium_until": premium_until
+            })
+
+        except (ValueError, TypeError):
+            return json_response(self, {
+                "ok": False,
+                "error": "Invalid approval data"
+            }, 400)
+
+        except json.JSONDecodeError:
+            return json_response(self, {
+                "ok": False,
+                "error": "Invalid JSON"
+            }, 400)
+
+        except Exception as e:
+            return json_response(self, {
+                "ok": False,
+                "error": str(e)
+            }, 500)
+
+
+    def admin_premium_reject(self):
+        try:
+            user, error = self._admin_authorized()
+
+            if error:
+                return json_response(self, {
+                    "ok": False,
+                    "error": error
+                }, 403)
+
+            length = int(
+                self.headers.get("Content-Length", "0")
+            )
+
+            if length <= 0 or length > 20_000:
+                return json_response(self, {
+                    "ok": False,
+                    "error": "Invalid request body"
+                }, 400)
+
+            payload = json.loads(
+                self.rfile.read(length).decode("utf-8")
+            )
+
+            request_id = int(
+                payload.get("request_id", 0)
+            )
+
+            admin_note = str(
+                payload.get("admin_note", "")
+            ).strip()[:1000]
+
+            if request_id <= 0:
+                return json_response(self, {
+                    "ok": False,
+                    "error": "Invalid request_id"
+                }, 400)
+
+            if not admin_note:
+                return json_response(self, {
+                    "ok": False,
+                    "error": "Reject reason is required"
+                }, 400)
+
+            now_text = datetime.now(timezone.utc).isoformat()
+
+            with get_db() as db:
+                request = db.execute("""
+                    SELECT id, status
+                    FROM premium_requests
+                    WHERE id = ?
+                """, (request_id,)).fetchone()
+
+                if not request:
+                    return json_response(self, {
+                        "ok": False,
+                        "error": "Premium request not found"
+                    }, 404)
+
+                if request["status"] != "pending":
+                    return json_response(self, {
+                        "ok": False,
+                        "error": "Premium request is already processed"
+                    }, 409)
+
+                db.execute("""
+                    UPDATE premium_requests
+                    SET
+                        status = 'rejected',
+                        admin_note = ?,
+                        processed_at = ?
+                    WHERE id = ?
+                """, (
+                    admin_note,
+                    now_text,
+                    request_id
+                ))
+
+            return json_response(self, {
+                "ok": True,
+                "message": "Premium request rejected",
+                "request_id": request_id
+            })
+
+        except (ValueError, TypeError):
+            return json_response(self, {
+                "ok": False,
+                "error": "Invalid rejection data"
+            }, 400)
+
+        except json.JSONDecodeError:
+            return json_response(self, {
+                "ok": False,
+                "error": "Invalid JSON"
+            }, 400)
+
+        except Exception as e:
+            return json_response(self, {
+                "ok": False,
+                "error": str(e)
+            }, 500)
 
 
     def admin_drop(self):
@@ -827,26 +1261,26 @@ class Handler(BaseHTTPRequestHandler):
                 self.headers.get("Content-Length", "0")
             )
 
-            if length <= 0 or length > 100_000:
+            # JSON requests may contain a receipt encoded as base64.
+            # Keep the total request reasonably small.
+            if length <= 0 or length > 4_500_000:
                 return json_response(self, {
                     "ok": False,
-                    "error": "Invalid request body"
+                    "error": "Request or receipt is too large"
                 }, 400)
 
             raw = self.rfile.read(length)
-            payload = json.loads(raw.decode("utf-8"))
+            payload = json.loads(
+                raw.decode("utf-8")
+            )
 
-            init_data = payload.get("initData", "")
-            amount_mmk = int(payload.get("amount_mmk", 0))
-
-            if amount_mmk <= 0:
-                return json_response(self, {
-                    "ok": False,
-                    "error": "Invalid premium amount"
-                }, 400)
-
+            # Authenticate Telegram Web App user before
+            # validating any payment fields.
             telegram_user, error = self.verify_telegram_init_data(
-                init_data
+                self.headers.get(
+                    "X-Telegram-Init-Data",
+                    ""
+                ).strip()
             )
 
             if error:
@@ -855,11 +1289,141 @@ class Handler(BaseHTTPRequestHandler):
                     "error": error
                 }, 401)
 
-            telegram_id = int(telegram_user["id"])
+            telegram_id = int(
+                telegram_user["id"]
+            )
+
+            amount_mmk = int(
+                payload.get("amount_mmk", 0)
+            )
+
+            payment_method = str(
+                payload.get("payment_method", "")
+            ).strip()[:100]
+
+            receipt_note = str(
+                payload.get("receipt_note", "")
+            ).strip()[:1000]
+
+            receipt_data = str(
+                payload.get("receipt_data", "")
+            ).strip()
+
+            receipt_name = str(
+                payload.get("receipt_name", "")
+            ).strip().lower()
+
+            if amount_mmk <= 0:
+                return json_response(self, {
+                    "ok": False,
+                    "error": "Invalid premium amount"
+                }, 400)
+
+            if not payment_method:
+                return json_response(self, {
+                    "ok": False,
+                    "error": "Payment method is required"
+                }, 400)
+
+            if not receipt_data:
+                return json_response(self, {
+                    "ok": False,
+                    "error": "Payment receipt is required"
+                }, 400)
+
+            # Accept only image receipts.
+            allowed_extensions = {
+                ".jpg",
+                ".jpeg",
+                ".png",
+                ".webp"
+            }
+
+            suffix = Path(receipt_name).suffix.lower()
+
+            if suffix not in allowed_extensions:
+                return json_response(self, {
+                    "ok": False,
+                    "error": "Receipt must be JPG, JPEG, PNG or WEBP"
+                }, 400)
+
+            # Remove optional data URL prefix.
+            if "," in receipt_data:
+                prefix, encoded = receipt_data.split(",", 1)
+
+                if "image/" not in prefix:
+                    return json_response(self, {
+                        "ok": False,
+                        "error": "Invalid receipt image"
+                    }, 400)
+
+                receipt_data = encoded
+
+            # Decode receipt safely.
+            import base64
+            import binascii
+
+            try:
+                receipt_bytes = base64.b64decode(
+                    receipt_data,
+                    validate=True
+                )
+            except (ValueError, binascii.Error):
+                return json_response(self, {
+                    "ok": False,
+                    "error": "Invalid receipt encoding"
+                }, 400)
+
+            # Limit decoded image size to 3 MB.
+            if len(receipt_bytes) <= 0 or len(receipt_bytes) > 3_000_000:
+                return json_response(self, {
+                    "ok": False,
+                    "error": "Receipt must be smaller than 3 MB"
+                }, 400)
+
+            # Basic image signatures.
+            signatures = {
+                ".jpg": (b"\xff\xd8\xff",),
+                ".jpeg": (b"\xff\xd8\xff",),
+                ".png": (b"\x89PNG\r\n\x1a\n",),
+                ".webp": (b"RIFF",)
+            }
+
+            valid_signature = any(
+                receipt_bytes.startswith(sig)
+                for sig in signatures[suffix]
+            )
+
+            if suffix == ".webp":
+                valid_signature = (
+                    valid_signature and
+                    len(receipt_bytes) >= 12 and
+                    receipt_bytes[8:12] == b"WEBP"
+                )
+
+            if not valid_signature:
+                return json_response(self, {
+                    "ok": False,
+                    "error": "Invalid receipt image format"
+                }, 400)
+
+            upload_root = (
+                BASE_DIR /
+                "uploads" /
+                "premium"
+            )
+
+            upload_root.mkdir(
+                parents=True,
+                exist_ok=True
+            )
 
             with get_db() as db:
                 user = db.execute("""
-                    SELECT id
+                    SELECT
+                        id,
+                        is_premium,
+                        premium_until
                     FROM users
                     WHERE telegram_id = ?
                 """, (telegram_id,)).fetchone()
@@ -870,24 +1434,70 @@ class Handler(BaseHTTPRequestHandler):
                         "error": "User is not registered"
                     }, 401)
 
+                # Do not create multiple active pending requests.
+                existing = db.execute("""
+                    SELECT id
+                    FROM premium_requests
+                    WHERE user_id = ?
+                      AND status = 'pending'
+                    ORDER BY id DESC
+                    LIMIT 1
+                """, (user["id"],)).fetchone()
+
+                if existing:
+                    return json_response(self, {
+                        "ok": False,
+                        "error": (
+                            "You already have a pending "
+                            "Premium request"
+                        ),
+                        "request_id": existing["id"]
+                    }, 409)
+
                 cursor = db.execute("""
                     INSERT INTO premium_requests(
                         user_id,
                         amount_mmk,
                         requested_days,
+                        payment_method,
+                        receipt_note,
                         status
                     )
-                    VALUES (?, ?, NULL, 'pending')
+                    VALUES (?, ?, NULL, ?, ?, 'pending')
                 """, (
                     user["id"],
-                    amount_mmk
+                    amount_mmk,
+                    payment_method,
+                    receipt_note
                 ))
 
                 request_id = cursor.lastrowid
 
+                filename = (
+                    f"request_{request_id}{suffix}"
+                )
+
+                receipt_path = upload_root / filename
+
+                receipt_path.write_bytes(
+                    receipt_bytes
+                )
+
+                db.execute("""
+                    UPDATE premium_requests
+                    SET receipt_path = ?
+                    WHERE id = ?
+                """, (
+                    str(receipt_path),
+                    request_id
+                ))
+
             return json_response(self, {
                 "ok": True,
-                "message": "Premium request submitted",
+                "message": (
+                    "Premium request submitted. "
+                    "Waiting for owner approval."
+                ),
                 "request_id": request_id
             })
 

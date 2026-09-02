@@ -943,6 +943,640 @@ async function loadPremium() {
 
 
 /* -----------------------------
+   Premium Purchase
+----------------------------- */
+
+function setPremiumSubmitStatus(message, isError = false) {
+    const el = document.getElementById(
+        "premium-submit-status"
+    );
+
+    if (!el) return;
+
+    el.textContent = message;
+    el.classList.toggle("error", Boolean(isError));
+}
+
+
+function fileToDataUrl(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(
+            new Error("Could not read receipt")
+        );
+
+        reader.readAsDataURL(file);
+    });
+}
+
+
+async function submitPremiumRequest() {
+    const amountEl =
+        document.getElementById("premium-amount");
+
+    const methodEl =
+        document.getElementById("premium-payment-method");
+
+    const receiptEl =
+        document.getElementById("premium-receipt");
+
+    const noteEl =
+        document.getElementById("premium-note");
+
+    const button =
+        document.getElementById("premium-submit");
+
+    const amount = Number(
+        amountEl?.value || 0
+    );
+
+    const paymentMethod =
+        methodEl?.value || "";
+
+    const file =
+        receiptEl?.files?.[0];
+
+    const note =
+        noteEl?.value?.trim() || "";
+
+    if (!amount || amount <= 0) {
+        setPremiumSubmitStatus(
+            "❌ Please enter a valid amount.",
+            true
+        );
+        return;
+    }
+
+    if (!paymentMethod) {
+        setPremiumSubmitStatus(
+            "❌ Please select a payment method.",
+            true
+        );
+        return;
+    }
+
+    if (!file) {
+        setPremiumSubmitStatus(
+            "❌ Please upload your payment receipt.",
+            true
+        );
+        return;
+    }
+
+    const allowedTypes = [
+        "image/jpeg",
+        "image/png",
+        "image/webp"
+    ];
+
+    if (!allowedTypes.includes(file.type)) {
+        setPremiumSubmitStatus(
+            "❌ Receipt must be JPG, PNG or WEBP.",
+            true
+        );
+        return;
+    }
+
+    if (file.size > 3 * 1024 * 1024) {
+        setPremiumSubmitStatus(
+            "❌ Receipt must be smaller than 3 MB.",
+            true
+        );
+        return;
+    }
+
+    try {
+        if (button) {
+            button.disabled = true;
+            button.textContent = "⏳ Submitting...";
+        }
+
+        setPremiumSubmitStatus(
+            "Uploading receipt..."
+        );
+
+        const receiptData =
+            await fileToDataUrl(file);
+
+        const data = await apiFetch(
+            API_BASE + "/api/premium/request",
+            {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    amount_mmk: Math.floor(amount),
+                    payment_method: paymentMethod,
+                    receipt_note: note,
+                    receipt_data: receiptData,
+                    receipt_name: file.name
+                })
+            }
+        );
+
+        setPremiumSubmitStatus(
+            `✅ Request #${data.request_id} submitted. Waiting for owner approval.`
+        );
+
+        if (amountEl) amountEl.value = "";
+        if (methodEl) methodEl.value = "";
+        if (receiptEl) receiptEl.value = "";
+        if (noteEl) noteEl.value = "";
+
+        await loadPremium();
+
+    } catch (error) {
+        console.error(
+            "Premium request:",
+            error
+        );
+
+        setPremiumSubmitStatus(
+            `❌ ${error.message || "Submission failed"}`,
+            true
+        );
+
+    } finally {
+        if (button) {
+            button.disabled = false;
+            button.textContent =
+                "📤 Submit Premium Request";
+        }
+    }
+}
+
+
+function setupPremiumPurchase() {
+    const button =
+        document.getElementById(
+            "premium-submit"
+        );
+
+    if (!button) return;
+
+    button.addEventListener(
+        "click",
+        submitPremiumRequest
+    );
+}
+
+
+/* -----------------------------
+   Premium Admin
+----------------------------- */
+
+function isCurrentOwner() {
+    return Boolean(
+        user &&
+        Number(user.id) === 5599773708
+    );
+}
+
+
+function setPremiumAdminStatus(message, isError = false) {
+    const el = document.getElementById(
+        "premium-admin-status"
+    );
+
+    if (!el) return;
+
+    el.textContent = message;
+    el.classList.toggle(
+        "error",
+        Boolean(isError)
+    );
+}
+
+
+async function loadPremiumAdmin() {
+    const panel =
+        document.getElementById(
+            "premium-admin-panel"
+        );
+
+    const list =
+        document.getElementById(
+            "premium-admin-requests"
+        );
+
+    if (!panel || !list) return;
+
+    if (!isCurrentOwner()) {
+        panel.style.display = "none";
+        return;
+    }
+
+    panel.style.display = "block";
+
+    try {
+        const data = await apiFetch(
+            API_BASE + "/api/admin/premium"
+        );
+
+        const requests =
+            data.requests || [];
+
+        list.innerHTML = "";
+
+        if (!requests.length) {
+            list.innerHTML =
+                '<div class="empty-mini">No premium requests.</div>';
+            return;
+        }
+
+        for (const request of requests) {
+            const item =
+                document.createElement("div");
+
+            item.className =
+                "premium-admin-request";
+
+            const status =
+                String(
+                    request.status || "pending"
+                ).toLowerCase();
+
+            item.innerHTML = `
+                <div class="premium-admin-head">
+                    <strong>
+                        #${request.id}
+                    </strong>
+                    <span class="premium-admin-status ${status}">
+                        ${status.toUpperCase()}
+                    </span>
+                </div>
+
+                <div class="premium-admin-user">
+                    👤 ${escapeHtml(
+                        request.first_name ||
+                        request.username ||
+                        "User"
+                    )}
+                </div>
+
+                <div class="premium-admin-info">
+                    <div>🆔 ${request.telegram_id}</div>
+                    <div>💰 ${request.amount_mmk || 0} MMK</div>
+                    <div>💳 ${escapeHtml(
+                        request.payment_method || "—"
+                    )}</div>
+                    <div>📝 ${escapeHtml(
+                        request.receipt_note || "—"
+                    )}</div>
+                </div>
+
+                ${
+                    request.receipt_path
+                    ? `
+                        <button
+                            type="button"
+                            class="premium-admin-btn"
+                            data-receipt-id="${request.id}"
+                        >
+                            🧾 View Receipt
+                        </button>
+                    `
+                    : `
+                        <div class="empty-mini">
+                            No receipt
+                        </div>
+                    `
+                }
+
+                ${
+                    status === "pending"
+                    ? `
+                        <div class="premium-admin-actions">
+
+                            <input
+                                type="number"
+                                min="1"
+                                max="3650"
+                                class="premium-admin-days"
+                                data-days-id="${request.id}"
+                                placeholder="Days"
+                            >
+
+                            <input
+                                type="text"
+                                maxlength="1000"
+                                class="premium-admin-note"
+                                data-note-id="${request.id}"
+                                placeholder="Admin note / reject reason"
+                            >
+
+                            <div class="premium-admin-action-row">
+                                <button
+                                    type="button"
+                                    class="premium-admin-btn approve"
+                                    data-approve-id="${request.id}"
+                                >
+                                    ✅ Approve
+                                </button>
+
+                                <button
+                                    type="button"
+                                    class="premium-admin-btn reject"
+                                    data-reject-id="${request.id}"
+                                >
+                                    ❌ Reject
+                                </button>
+                            </div>
+                        </div>
+                    `
+                    : `
+                        <div class="premium-admin-note-display">
+                            ${escapeHtml(
+                                request.admin_note || ""
+                            )}
+                        </div>
+                    `
+                }
+            `;
+
+            list.appendChild(item);
+        }
+
+    } catch (error) {
+        console.error(
+            "Premium Admin API:",
+            error
+        );
+
+        setPremiumAdminStatus(
+            `❌ ${error.message || "Could not load requests"}`,
+            true
+        );
+    }
+}
+
+
+function escapeHtml(value) {
+    return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+}
+
+
+async function approvePremiumRequest(requestId) {
+    const daysEl =
+        document.querySelector(
+            `[data-days-id="${requestId}"]`
+        );
+
+    const noteEl =
+        document.querySelector(
+            `[data-note-id="${requestId}"]`
+        );
+
+    const days =
+        Number(daysEl?.value || 0);
+
+    const adminNote =
+        noteEl?.value?.trim() || "";
+
+    if (!days || days <= 0) {
+        setPremiumAdminStatus(
+            "❌ Enter Premium days before approving.",
+            true
+        );
+        return;
+    }
+
+    if (days > 3650) {
+        setPremiumAdminStatus(
+            "❌ Maximum is 3650 days.",
+            true
+        );
+        return;
+    }
+
+    if (!confirm(
+        `Approve request #${requestId} for ${days} day(s)?`
+    )) {
+        return;
+    }
+
+    try {
+        setPremiumAdminStatus(
+            "⏳ Approving..."
+        );
+
+        await apiFetch(
+            API_BASE +
+            "/api/admin/premium/approve",
+            {
+                method: "POST",
+                headers: {
+                    "Content-Type":
+                        "application/json"
+                },
+                body: JSON.stringify({
+                    request_id: requestId,
+                    days: Math.floor(days),
+                    admin_note: adminNote
+                })
+            }
+        );
+
+        setPremiumAdminStatus(
+            `✅ Request #${requestId} approved.`
+        );
+
+        await loadPremiumAdmin();
+        await loadPremium();
+
+    } catch (error) {
+        setPremiumAdminStatus(
+            `❌ ${error.message || "Approval failed"}`,
+            true
+        );
+    }
+}
+
+
+async function rejectPremiumRequest(requestId) {
+    const noteEl =
+        document.querySelector(
+            `[data-note-id="${requestId}"]`
+        );
+
+    const adminNote =
+        noteEl?.value?.trim() || "";
+
+    if (!adminNote) {
+        setPremiumAdminStatus(
+            "❌ Enter a reject reason.",
+            true
+        );
+        return;
+    }
+
+    if (!confirm(
+        `Reject Premium request #${requestId}?`
+    )) {
+        return;
+    }
+
+    try {
+        setPremiumAdminStatus(
+            "⏳ Rejecting..."
+        );
+
+        await apiFetch(
+            API_BASE +
+            "/api/admin/premium/reject",
+            {
+                method: "POST",
+                headers: {
+                    "Content-Type":
+                        "application/json"
+                },
+                body: JSON.stringify({
+                    request_id: requestId,
+                    admin_note: adminNote
+                })
+            }
+        );
+
+        setPremiumAdminStatus(
+            `✅ Request #${requestId} rejected.`
+        );
+
+        await loadPremiumAdmin();
+        await loadPremium();
+
+    } catch (error) {
+        setPremiumAdminStatus(
+            `❌ ${error.message || "Rejection failed"}`,
+            true
+        );
+    }
+}
+
+
+async function viewPremiumReceipt(requestId) {
+    try {
+        const response = await fetch(
+            API_BASE +
+            `/api/admin/premium/receipt?request_id=${encodeURIComponent(requestId)}`,
+            {
+                cache: "no-store",
+                headers: {
+                    "X-Telegram-Init-Data":
+                        getInitData()
+                }
+            }
+        );
+
+        if (!response.ok) {
+            const data =
+                await response.json()
+                    .catch(() => ({}));
+
+            throw new Error(
+                data.error ||
+                `Receipt error ${response.status}`
+            );
+        }
+
+        const blob =
+            await response.blob();
+
+        const url =
+            URL.createObjectURL(blob);
+
+        if (tg) {
+            tg.openLink(url);
+        } else {
+            window.open(
+                url,
+                "_blank",
+                "noopener"
+            );
+        }
+
+        setTimeout(
+            () => URL.revokeObjectURL(url),
+            60000
+        );
+
+    } catch (error) {
+        setPremiumAdminStatus(
+            `❌ ${error.message || "Could not open receipt"}`,
+            true
+        );
+    }
+}
+
+
+function setupPremiumAdmin() {
+    if (!isCurrentOwner()) return;
+
+    const list =
+        document.getElementById(
+            "premium-admin-requests"
+        );
+
+    if (!list) return;
+
+    list.addEventListener(
+        "click",
+        async (event) => {
+            const approve =
+                event.target.closest(
+                    "[data-approve-id]"
+                );
+
+            const reject =
+                event.target.closest(
+                    "[data-reject-id]"
+                );
+
+            const receipt =
+                event.target.closest(
+                    "[data-receipt-id]"
+                );
+
+            if (approve) {
+                await approvePremiumRequest(
+                    Number(
+                        approve.dataset.approveId
+                    )
+                );
+                return;
+            }
+
+            if (reject) {
+                await rejectPremiumRequest(
+                    Number(
+                        reject.dataset.rejectId
+                    )
+                );
+                return;
+            }
+
+            if (receipt) {
+                await viewPremiumReceipt(
+                    Number(
+                        receipt.dataset.receiptId
+                    )
+                );
+            }
+        }
+    );
+
+    loadPremiumAdmin();
+}
+
+
+/* -----------------------------
    Events API
 ----------------------------- */
 
@@ -1180,6 +1814,8 @@ document.getElementById("catch-input")
 ----------------------------- */
 
 loadTelegramUser();
+setupPremiumPurchase();
+setupPremiumAdmin();
 loadDrop();
 loadStats();
 loadCards();

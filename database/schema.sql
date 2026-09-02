@@ -50,6 +50,10 @@ CREATE TABLE IF NOT EXISTS premium_requests (
     user_id INTEGER NOT NULL,
     amount_mmk INTEGER NOT NULL,
     requested_days INTEGER,
+    payment_method TEXT,
+    receipt_path TEXT,
+    receipt_note TEXT,
+    admin_note TEXT,
     status TEXT NOT NULL DEFAULT 'pending'
         CHECK (status IN ('pending','approved','rejected')),
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
