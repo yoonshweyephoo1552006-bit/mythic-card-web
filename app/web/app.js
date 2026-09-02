@@ -1797,18 +1797,388 @@ async function loadBattles() {
    Trades API
 ----------------------------- */
 
+function setTradeStatus(message, isError = false) {
+    const el = document.getElementById(
+        "trade-action-status"
+    );
+
+    if (!el) return;
+
+    el.textContent = message || "";
+
+    el.classList.toggle(
+        "error",
+        Boolean(isError)
+    );
+}
+
+
+function setTradeRarityStatus(
+    message,
+    isError = false
+) {
+    const el = document.getElementById(
+        "trade-rarity-status"
+    );
+
+    if (!el) return;
+
+    el.textContent = message || "";
+
+    el.classList.toggle(
+        "error",
+        Boolean(isError)
+    );
+}
+
+
+function getCardById(cardId) {
+    return allCards.find(
+        card =>
+            Number(card.id) === Number(cardId)
+    );
+}
+
+
+function populateTradeCards() {
+    const offeredSelect =
+        document.getElementById(
+            "trade-offered-card"
+        );
+
+    const requestedSelect =
+        document.getElementById(
+            "trade-requested-card"
+        );
+
+    if (!offeredSelect || !requestedSelect) {
+        return;
+    }
+
+    const ownedCards = allCards
+        .filter(card => getMyQuantity(card) > 0)
+        .sort((a, b) =>
+            String(a.name || "")
+                .localeCompare(
+                    String(b.name || "")
+                )
+        );
+
+    const activeCards = allCards
+        .filter(
+            card =>
+                Number(card.is_active ?? 1) === 1
+        )
+        .sort((a, b) =>
+            String(a.name || "")
+                .localeCompare(
+                    String(b.name || "")
+                )
+        );
+
+    offeredSelect.innerHTML =
+        '<option value="">Select a card</option>';
+
+    for (const card of ownedCards) {
+        const option =
+            document.createElement("option");
+
+        option.value = card.id;
+
+        option.textContent =
+            `${card.name || card.card_code} ` +
+            `(${getCardRarity(card)}) ` +
+            `×${getMyQuantity(card)}`;
+
+        offeredSelect.appendChild(option);
+    }
+
+    requestedSelect.innerHTML =
+        '<option value="">Select a card</option>';
+
+    for (const card of activeCards) {
+        const option =
+            document.createElement("option");
+
+        option.value = card.id;
+
+        option.textContent =
+            `${card.name || card.card_code} ` +
+            `(${getCardRarity(card)})`;
+
+        requestedSelect.appendChild(option);
+    }
+
+    updateTradeRarityStatus();
+}
+
+
+function updateTradeRarityStatus() {
+    const offeredSelect =
+        document.getElementById(
+            "trade-offered-card"
+        );
+
+    const requestedSelect =
+        document.getElementById(
+            "trade-requested-card"
+        );
+
+    if (!offeredSelect || !requestedSelect) {
+        return;
+    }
+
+    const offered =
+        getCardById(offeredSelect.value);
+
+    const requested =
+        getCardById(requestedSelect.value);
+
+    if (!offered || !requested) {
+        setTradeRarityStatus("");
+        return;
+    }
+
+    const offeredRarity =
+        getCardRarity(offered);
+
+    const requestedRarity =
+        getCardRarity(requested);
+
+    if (offeredRarity !== requestedRarity) {
+        setTradeRarityStatus(
+            "❌ Cards must have the same rarity.",
+            true
+        );
+        return;
+    }
+
+    if (
+        Number(offered.id) ===
+        Number(requested.id)
+    ) {
+        setTradeRarityStatus(
+            "❌ Select two different cards.",
+            true
+        );
+        return;
+    }
+
+    setTradeRarityStatus(
+        `✅ ${offeredRarity.toUpperCase()} ↔ ` +
+        `${requestedRarity.toUpperCase()}`
+    );
+}
+
+
+async function createTrade() {
+    const targetInput =
+        document.getElementById(
+            "trade-target-user"
+        );
+
+    const offeredSelect =
+        document.getElementById(
+            "trade-offered-card"
+        );
+
+    const requestedSelect =
+        document.getElementById(
+            "trade-requested-card"
+        );
+
+    const button =
+        document.getElementById(
+            "trade-create-btn"
+        );
+
+    const targetUserId =
+        Number(targetInput?.value || 0);
+
+    const offeredCardId =
+        Number(offeredSelect?.value || 0);
+
+    const requestedCardId =
+        Number(requestedSelect?.value || 0);
+
+    if (targetUserId <= 0) {
+        setTradeStatus(
+            "❌ Enter a valid Telegram User ID.",
+            true
+        );
+        return;
+    }
+
+    if (
+        offeredCardId <= 0 ||
+        requestedCardId <= 0
+    ) {
+        setTradeStatus(
+            "❌ Select both cards.",
+            true
+        );
+        return;
+    }
+
+    const offered =
+        getCardById(offeredCardId);
+
+    const requested =
+        getCardById(requestedCardId);
+
+    if (!offered || !requested) {
+        setTradeStatus(
+            "❌ Card not found.",
+            true
+        );
+        return;
+    }
+
+    if (
+        getCardRarity(offered) !==
+        getCardRarity(requested)
+    ) {
+        setTradeStatus(
+            "❌ Both cards must have the same rarity.",
+            true
+        );
+        return;
+    }
+
+    if (offeredCardId === requestedCardId) {
+        setTradeStatus(
+            "❌ Select two different cards.",
+            true
+        );
+        return;
+    }
+
+    if (button) {
+        button.disabled = true;
+        button.textContent =
+            "⏳ SENDING...";
+    }
+
+    setTradeStatus("");
+
+    try {
+        await apiFetch(
+            API_BASE + "/api/trade/create",
+            {
+                method: "POST",
+                headers: {
+                    "Content-Type":
+                        "application/json"
+                },
+                body: JSON.stringify({
+                    to_user_id: targetUserId,
+                    offered_card_id:
+                        offeredCardId,
+                    requested_card_id:
+                        requestedCardId
+                })
+            }
+        );
+
+        setTradeStatus(
+            "✅ Trade request sent."
+        );
+
+        if (targetInput) {
+            targetInput.value = "";
+        }
+
+        if (offeredSelect) {
+            offeredSelect.value = "";
+        }
+
+        if (requestedSelect) {
+            requestedSelect.value = "";
+        }
+
+        updateTradeRarityStatus();
+
+        await loadTrades();
+
+    } catch (error) {
+        setTradeStatus(
+            `❌ ${error.message || "Trade failed."}`,
+            true
+        );
+
+    } finally {
+        if (button) {
+            button.disabled = false;
+            button.textContent =
+                "📤 SEND TRADE";
+        }
+    }
+}
+
+
+async function tradeAction(
+    action,
+    tradeId
+) {
+    try {
+        const data =
+            await apiFetch(
+                API_BASE +
+                `/api/trade/${action}`,
+                {
+                    method: "POST",
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
+                    body: JSON.stringify({
+                        trade_id:
+                            Number(tradeId)
+                    })
+                }
+            );
+
+        setTradeStatus(
+            `✅ Trade ${data.trade?.status || action}.`
+        );
+
+        await Promise.allSettled([
+            loadTrades(),
+            loadCollection(),
+            loadMe()
+        ]);
+
+        populateTradeCards();
+
+    } catch (error) {
+        setTradeStatus(
+            `❌ ${error.message || "Trade action failed."}`,
+            true
+        );
+
+        await loadTrades();
+    }
+}
+
+
 async function loadTrades() {
     try {
-        const data = await apiFetch(API_BASE + "/api/trades");
+        const data =
+            await apiFetch(
+                API_BASE + "/api/trades"
+            );
 
         const list =
-            document.getElementById("trades-list");
+            document.getElementById(
+                "trades-list"
+            );
 
         if (!list) return;
 
         list.innerHTML = "";
 
-        const trades = data.trades || [];
+        const trades =
+            data.trades || [];
 
         if (!trades.length) {
             list.innerHTML =
@@ -1816,22 +2186,193 @@ async function loadTrades() {
             return;
         }
 
+        const currentUserId =
+            Number(
+                window.currentUserId || 0
+            );
+
         for (const trade of trades) {
-            const item = document.createElement("div");
-            item.className = "trade-item";
+            const item =
+                document.createElement("div");
+
+            item.className =
+                "trade-item";
+
+            const isIncoming =
+                currentUserId > 0 &&
+                Number(trade.to_user_id) ===
+                    currentUserId;
+
+            const isOutgoing =
+                currentUserId > 0 &&
+                Number(trade.from_user_id) ===
+                    currentUserId;
+
+            const offeredLabel =
+                trade.offered_card_name ||
+                trade.offered_card_code ||
+                `Card #${trade.offered_card_id}`;
+
+            const requestedLabel =
+                trade.requested_card_name ||
+                trade.requested_card_code ||
+                `Card #${trade.requested_card_id}`;
+
+            const rarity =
+                trade.offered_rarity ||
+                trade.requested_rarity ||
+                "";
+
+            let actions = "";
+
+            if (
+                trade.status === "pending" &&
+                isIncoming
+            ) {
+                actions = `
+                    <div class="trade-actions">
+                        <button
+                            type="button"
+                            data-trade-action="accept"
+                            data-trade-id="${trade.id}"
+                        >
+                            ✅ Accept
+                        </button>
+
+                        <button
+                            type="button"
+                            data-trade-action="reject"
+                            data-trade-id="${trade.id}"
+                        >
+                            ❌ Reject
+                        </button>
+                    </div>
+                `;
+            }
+
+            if (
+                trade.status === "pending" &&
+                isOutgoing
+            ) {
+                actions = `
+                    <div class="trade-actions">
+                        <button
+                            type="button"
+                            data-trade-action="cancel"
+                            data-trade-id="${trade.id}"
+                        >
+                            🚫 Cancel
+                        </button>
+                    </div>
+                `;
+            }
 
             item.innerHTML = `
-                <strong>Trade #${trade.id}</strong>
-                <span>${trade.status || "unknown"}</span>
-                <small>${trade.created_at || ""}</small>
+                <strong>
+                    Trade #${trade.id}
+                </strong>
+
+                <span>
+                    ${
+                        isIncoming
+                            ? "📥 Incoming"
+                            : isOutgoing
+                                ? "📤 Outgoing"
+                                : ""
+                    }
+                    · ${trade.status || "unknown"}
+                </span>
+
+                <small>
+                    ${offeredLabel}
+                    ↔
+                    ${requestedLabel}
+                    ${rarity ? ` · ${rarity}` : ""}
+                </small>
+
+                <small>
+                    ${trade.created_at || ""}
+                </small>
+
+                ${actions}
             `;
 
             list.appendChild(item);
         }
 
+        list
+            .querySelectorAll(
+                "[data-trade-action]"
+            )
+            .forEach(button => {
+                button.addEventListener(
+                    "click",
+                    async () => {
+                        const action =
+                            button.dataset
+                                .tradeAction;
+
+                        const tradeId =
+                            button.dataset
+                                .tradeId;
+
+                        button.disabled = true;
+
+                        await tradeAction(
+                            action,
+                            tradeId
+                        );
+                    }
+                );
+            });
+
     } catch (error) {
-        console.error("Trades API:", error);
+        console.error(
+            "Trades API:",
+            error
+        );
     }
+}
+
+
+function setupTradeUI() {
+    const offeredSelect =
+        document.getElementById(
+            "trade-offered-card"
+        );
+
+    const requestedSelect =
+        document.getElementById(
+            "trade-requested-card"
+        );
+
+    const createButton =
+        document.getElementById(
+            "trade-create-btn"
+        );
+
+    if (offeredSelect) {
+        offeredSelect.addEventListener(
+            "change",
+            updateTradeRarityStatus
+        );
+    }
+
+    if (requestedSelect) {
+        requestedSelect.addEventListener(
+            "change",
+            updateTradeRarityStatus
+        );
+    }
+
+    if (createButton) {
+        createButton.addEventListener(
+            "click",
+            createTrade
+        );
+    }
+
+    populateTradeCards();
 }
 
 

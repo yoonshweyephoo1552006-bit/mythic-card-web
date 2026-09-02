@@ -352,8 +352,63 @@
                     </div>
                 </div>
 
-                <div class="section-card">
+                <div class="section-card trade-section">
                     <h3>🔄 Trades</h3>
+
+                    <div class="trade-form">
+                        <label for="trade-target-user">
+                            Target Telegram User ID
+                        </label>
+
+                        <input
+                            id="trade-target-user"
+                            type="number"
+                            inputmode="numeric"
+                            min="1"
+                            placeholder="Enter user ID"
+                        >
+
+                        <label for="trade-offered-card">
+                            Your Card
+                        </label>
+
+                        <select id="trade-offered-card">
+                            <option value="">
+                                Select a card
+                            </option>
+                        </select>
+
+                        <label for="trade-requested-card">
+                            Card You Want
+                        </label>
+
+                        <select id="trade-requested-card">
+                            <option value="">
+                                Select a card
+                            </option>
+                        </select>
+
+                        <div
+                            id="trade-rarity-status"
+                            class="trade-rarity-status"
+                        ></div>
+
+                        <button
+                            type="button"
+                            id="trade-create-btn"
+                            class="primary-btn"
+                        >
+                            📤 SEND TRADE
+                        </button>
+
+                        <div
+                            id="trade-action-status"
+                            class="trade-action-status"
+                        ></div>
+                    </div>
+
+                    <div class="trade-divider"></div>
+
                     <div id="trades-list">
                         <div class="empty-mini">No trades yet.</div>
                     </div>
