@@ -1462,10 +1462,21 @@ async function rejectPremiumRequest(requestId) {
 
 
 async function viewPremiumReceipt(requestId) {
+    const receiptUrl =
+        API_BASE +
+        `/api/admin/premium/receipt?request_id=${encodeURIComponent(requestId)}`;
+
     try {
+        console.log("Premium receipt request:", receiptUrl);
+        console.log("Premium receipt initData:", {
+            hasInitData: Boolean(getInitData()),
+            initDataLength: getInitData().length,
+            hostname: window.location.hostname,
+            apiBase: API_BASE
+        });
+
         const response = await fetch(
-            API_BASE +
-            `/api/admin/premium/receipt?request_id=${encodeURIComponent(requestId)}`,
+            receiptUrl,
             {
                 cache: "no-store",
                 headers: {
@@ -1473,6 +1484,13 @@ async function viewPremiumReceipt(requestId) {
                         getInitData()
                 }
             }
+        );
+
+        console.log(
+            "Premium receipt response:",
+            response.status,
+            response.type,
+            response.headers.get("content-type")
         );
 
         if (!response.ok) {
@@ -1489,32 +1507,106 @@ async function viewPremiumReceipt(requestId) {
         const blob =
             await response.blob();
 
-        const url =
-            URL.createObjectURL(blob);
+        console.log(
+            "Premium receipt loaded:",
+            blob.type,
+            blob.size
+        );
 
-        if (tg) {
-            tg.openLink(url);
-        } else {
-            window.open(
-                url,
-                "_blank",
-                "noopener"
+        const image =
+            document.getElementById(
+                "receipt-modal-image"
+            );
+
+        const modal =
+            document.getElementById(
+                "receipt-modal"
+            );
+
+        if (!image || !modal) {
+            throw new Error(
+                "Receipt preview UI is unavailable"
             );
         }
 
-        setTimeout(
-            () => URL.revokeObjectURL(url),
-            60000
-        );
+        const reader =
+            new FileReader();
+
+        const dataUrl =
+            await new Promise(
+                (resolve, reject) => {
+                    reader.onload =
+                        () => resolve(reader.result);
+
+                    reader.onerror =
+                        () => reject(
+                            new Error(
+                                "Could not read receipt image"
+                            )
+                        );
+
+                    reader.readAsDataURL(blob);
+                }
+            );
+
+        image.src = dataUrl;
+
+        modal.classList.add("show");
+        document.body.classList.add("modal-open");
 
     } catch (error) {
+        console.error(
+            "Premium receipt error:",
+            error,
+            "name=",
+            error?.name,
+            "message=",
+            error?.message,
+            "stack=",
+            error?.stack
+        );
+
         setPremiumAdminStatus(
-            `❌ ${error.message || "Could not open receipt"}`,
+            `❌ Receipt request failed: ${error.message || "Unknown error"}`,
             true
         );
     }
 }
 
+function setupPremiumReceiptModal() {
+    const modal =
+        document.getElementById("receipt-modal");
+
+    const close =
+        document.getElementById("receipt-modal-close");
+
+    const backdrop =
+        document.getElementById("receipt-modal-backdrop");
+
+    if (!modal) return;
+
+    const hide = () => {
+        modal.classList.remove("show");
+        document.body.classList.remove("modal-open");
+
+        const image =
+            document.getElementById(
+                "receipt-modal-image"
+            );
+
+        if (image) {
+            image.removeAttribute("src");
+        }
+    };
+
+    if (close) {
+        close.addEventListener("click", hide);
+    }
+
+    if (backdrop) {
+        backdrop.addEventListener("click", hide);
+    }
+}
 
 function setupPremiumAdmin() {
     if (!isCurrentOwner()) return;
