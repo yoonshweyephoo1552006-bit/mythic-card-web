@@ -1804,10 +1804,22 @@ async function loadTrades() {
    Dashboard refresh
 ----------------------------- */
 
-async function loadUserData() {
+async function loadUserData(retries = 10) {
     if (!getInitData()) {
+        if (retries > 0) {
+            console.warn(
+                `Telegram initData unavailable. Retrying... (${retries})`
+            );
+
+            setTimeout(() => {
+                loadUserData(retries - 1);
+            }, 500);
+
+            return;
+        }
+
         console.warn(
-            "Telegram initData unavailable. Open from Telegram."
+            "Telegram initData unavailable after retries. Open from Telegram."
         );
         return;
     }
