@@ -1818,6 +1818,20 @@ class Handler(BaseHTTPRequestHandler):
                 (telegram_id, username, first_name)
             )
 
+            # Owner always has free permanent Premium.
+            if telegram_id == OWNER_ID:
+                db.execute(
+                    """
+                    UPDATE users
+                    SET
+                        is_owner = 1,
+                        is_premium = 1,
+                        premium_until = NULL
+                    WHERE telegram_id = ?
+                    """,
+                    (telegram_id,)
+                )
+
             row = db.execute("""
                 SELECT *
                 FROM users
