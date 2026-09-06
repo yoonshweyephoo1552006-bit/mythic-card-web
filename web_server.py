@@ -651,6 +651,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/admin/card/replace":
             return self.admin_card_replace()
 
+        if path == "/api/admin/card/deactivate":
+            return self.admin_card_deactivate()
+
         if path == "/api/premium/request":
             return self.premium_request()
 
@@ -951,6 +954,76 @@ class Handler(BaseHTTPRequestHandler):
 
         except Exception as exc:
             print("[CARD SYNC REPLACE ERROR]", repr(exc), flush=True)
+
+            return json_response(self, {
+                "ok": False,
+                "error": str(exc)
+            }, 500)
+
+
+    def admin_card_deactivate(self):
+        if not self._card_sync_authorized():
+            return json_response(self, {
+                "ok": False,
+                "error": "Card sync authorization failed"
+            }, 403)
+
+        try:
+            query = dict(parse_qsl(
+                urlparse(self.path).query,
+                keep_blank_values=True
+            ))
+
+            card_code = query.get("card_code", "").strip()
+
+            if not self._safe_card_code(card_code):
+                return json_response(self, {
+                    "ok": False,
+                    "error": "Invalid card_code"
+                }, 400)
+
+            with get_db() as db:
+                row = db.execute(
+                    """
+                    SELECT id, card_code, name, rarity, is_active
+                    FROM cards
+                    WHERE card_code = ?
+                    LIMIT 1
+                    """,
+                    (card_code,)
+                ).fetchone()
+
+                if not row:
+                    return json_response(self, {
+                        "ok": False,
+                        "error": "Card not found"
+                    }, 404)
+
+                db.execute(
+                    """
+                    UPDATE cards
+                    SET is_active = 0
+                    WHERE id = ?
+                    """,
+                    (row["id"],)
+                )
+
+                db.commit()
+
+            return json_response(self, {
+                "ok": True,
+                "action": "deactivate",
+                "card": {
+                    "id": row["id"],
+                    "card_code": row["card_code"],
+                    "name": row["name"],
+                    "rarity": row["rarity"],
+                    "is_active": 0
+                }
+            })
+
+        except Exception as exc:
+            print("[CARD DEACTIVATE ERROR]", repr(exc), flush=True)
 
             return json_response(self, {
                 "ok": False,
