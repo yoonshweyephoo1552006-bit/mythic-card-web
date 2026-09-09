@@ -1707,25 +1707,15 @@ class Handler(BaseHTTPRequestHandler):
                         "error": "No active drop"
                     }, 409)
 
-                # Validate the card name typed by the player.
-                def normalize_card_name(value):
-                    return " ".join(
-                        str(value or "").strip().split()
-                    ).casefold()
+                # Catch command: the player only needs to type "catch".
+                catch_command = " ".join(
+                    str(catch_name or "").strip().split()
+                ).casefold()
 
-                entered_name = normalize_card_name(catch_name)
-                actual_name = normalize_card_name(drop["name"])
-
-                if not entered_name:
+                if catch_command != "catch":
                     return json_response(self, {
                         "ok": False,
-                        "error": "Please type the card name"
-                    }, 400)
-
-                if entered_name != actual_name:
-                    return json_response(self, {
-                        "ok": False,
-                        "error": "Wrong card name"
+                        "error": "Type catch to catch this card"
                     }, 400)
 
                 # Atomic winner selection.
