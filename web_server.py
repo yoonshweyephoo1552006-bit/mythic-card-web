@@ -36,49 +36,6 @@ def init_db():
                 schema_path.read_text(encoding="utf-8")
             )
 
-        # Seed the built-in card catalog.
-        # INSERT OR IGNORE keeps existing production card data safe.
-        seed_cards = [
-            ("CARD-0001", "Card #0001", "legendary",
-             "assets/cards/legendary/CARD-0001.jpg"),
-            ("CARD-0002", "Card #0002", "common",
-             "assets/cards/common/CARD-0002.jpg"),
-            ("CARD-0004", "Card #0004", "mythic",
-             "assets/cards/mythic/CARD-0004.jpg"),
-            ("CARD-0005", "Card #0005", "mythic",
-             "assets/cards/mythic/CARD-0005.jpg"),
-            ("CARD-0006", "Card #0006", "mythic",
-             "assets/cards/mythic/CARD-0006.jpg"),
-            ("CARD-0007", "Card #0007", "mythic",
-             "assets/cards/mythic/CARD-0007.jpg"),
-            ("CARD-0008", "Card #0008", "mythic",
-             "assets/cards/mythic/CARD-0008.jpg"),
-            ("CARD-0009", "Card #0009", "mythic",
-             "assets/cards/mythic/CARD-0009.jpg"),
-            ("CARD-0010", "Card #0010", "mythic",
-             "assets/cards/mythic/CARD-0010.jpg"),
-            ("CARD-0011", "Card #0011", "mythic",
-             "assets/cards/mythic/CARD-0011.jpg"),
-            ("CARD-0012", "Card #0012", "mythic",
-             "assets/cards/mythic/CARD-0012.jpg"),
-            ("CARD-0013", "Card #0013", "mythic",
-             "assets/cards/mythic/CARD-0013.jpg"),
-        ]
-
-        for card_code, name, rarity, image_path in seed_cards:
-            card_image = BASE_DIR / image_path
-            if card_image.exists():
-                db.execute("""
-                    INSERT OR IGNORE INTO cards
-                    (card_code, name, rarity, image_path, is_active)
-                    VALUES (?, ?, ?, ?, ?)
-                """, (
-                    card_code,
-                    name,
-                    rarity,
-                    image_path,
-                    1
-                ))
 
         db.commit()
 
@@ -554,25 +511,6 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Telegram-Init-Data, X-Card-Sync-Secret")
         self.end_headers()
 
-    def seed_test_card(self):
-        with get_db() as db:
-            db.execute("""
-                INSERT OR IGNORE INTO cards
-                (card_code, name, rarity, image_path, is_active)
-                VALUES (?, ?, ?, ?, ?)
-            """, (
-                "CARD-0001",
-                "Card #0001",
-                "legendary",
-                "assets/cards/legendary/CARD-0001.jpg",
-                1
-            ))
-            db.commit()
-
-        return json_response(self, {
-            "ok": True,
-            "message": "Test card seeded"
-        })
 
     def do_GET(self):
         path = urlparse(self.path).path
@@ -582,9 +520,6 @@ class Handler(BaseHTTPRequestHandler):
                 "ok": True,
                 "service": "MYTHIC CARD WEB API"
             })
-
-        if path == "/api/seed-test-card":
-            return self.seed_test_card()
 
         if path == "/api/cards":
             return self.cards()
@@ -653,6 +588,9 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/admin/card/deactivate":
             return self.admin_card_deactivate()
+
+        if path == "/api/admin/card/delete":
+            return self.admin_card_delete()
 
         if path == "/api/premium/request":
             return self.premium_request()
@@ -960,6 +898,100 @@ class Handler(BaseHTTPRequestHandler):
                 "error": str(exc)
             }, 500)
 
+
+    def admin_card_delete(self):
+        if not self._card_sync_authorized():
+            return json_response(self, {
+                "ok": False,
+                "error": "Card sync authorization failed"
+            }, 403)
+
+        try:
+            query = dict(parse_qsl(
+                urlparse(self.path).query,
+                keep_blank_values=True
+            ))
+
+            card_code = query.get("card_code", "").strip()
+
+            allowed_test_cards = {
+                "CARD-0001", "CARD-0002",
+                "CARD-0004", "CARD-0005", "CARD-0006", "CARD-0007",
+                "CARD-0008", "CARD-0009", "CARD-0010", "CARD-0011",
+                "CARD-0012", "CARD-0013",
+            }
+
+            if card_code not in allowed_test_cards:
+                return json_response(self, {
+                    "ok": False,
+                    "error": "Only approved test cards can be permanently deleted"
+                }, 400)
+
+            with get_db() as db:
+                row = db.execute(
+                    """
+                    SELECT id, card_code, name, rarity, is_active
+                    FROM cards
+                    WHERE card_code = ?
+                    LIMIT 1
+                    """,
+                    (card_code,)
+                ).fetchone()
+
+                if not row:
+                    return json_response(self, {
+                        "ok": False,
+                        "error": "Card not found"
+                    }, 404)
+
+                card_id = row["id"]
+
+                db.execute(
+                    "DELETE FROM drops WHERE card_id = ?",
+                    (card_id,)
+                )
+
+                db.execute(
+                    """
+                    DELETE FROM trades
+                    WHERE offered_card_id = ?
+                       OR requested_card_id = ?
+                    """,
+                    (card_id, card_id)
+                )
+
+                db.execute(
+                    """
+                    DELETE FROM battles
+                    WHERE challenger_card_id = ?
+                       OR opponent_card_id = ?
+                    """,
+                    (card_id, card_id)
+                )
+
+                db.execute(
+                    "DELETE FROM cards WHERE id = ?",
+                    (card_id,)
+                )
+
+                db.commit()
+
+            return json_response(self, {
+                "ok": True,
+                "action": "delete",
+                "card": {
+                    "id": row["id"],
+                    "card_code": row["card_code"],
+                    "name": row["name"],
+                    "rarity": row["rarity"],
+                }
+            })
+
+        except Exception as exc:
+            return json_response(self, {
+                "ok": False,
+                "error": str(exc)
+            }, 500)
 
     def admin_card_deactivate(self):
         if not self._card_sync_authorized():
