@@ -1114,6 +1114,35 @@ body.modal-open {
 }
 
 /* -------------------------
+   Drop Card Arrival
+   ------------------------- */
+
+.drop-card-arrival {
+    animation: dropCardArrival .55s cubic-bezier(.2,.8,.2,1) both;
+    transform-origin: center;
+}
+
+@keyframes dropCardArrival {
+    0% {
+        opacity: 0;
+        transform: translateY(18px) scale(.88);
+        filter: brightness(1.7);
+    }
+
+    55% {
+        opacity: 1;
+        transform: translateY(-4px) scale(1.02);
+        filter: brightness(1.15);
+    }
+
+    100% {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+        filter: brightness(1);
+    }
+}
+
+/* -------------------------
    Animations
    ------------------------- */
 

@@ -188,7 +188,7 @@ function renderDrop(drop) {
     if (frameEl) {
         if (drop.image_path) {
             frameEl.innerHTML =
-                `<img src="${ASSET_BASE}${drop.image_path}" alt="Card">`;
+                `<img class="drop-card-arrival" src="${ASSET_BASE}${drop.image_path}" alt="Card">`;
         } else {
             frameEl.innerHTML =
                 '<div class="card-placeholder">🃏</div>';
@@ -280,11 +280,11 @@ async function catchCard() {
     }
 
     const catchName =
-        input?.value?.trim() || "";
+        input?.value?.trim().toLowerCase() || "";
 
-    if (!catchName) {
+    if (catchName !== "catch") {
         showMessage(
-            "✍️ Type the card name first."
+            '✍️ Type "catch" to catch the card.'
         );
 
         input?.focus();
@@ -317,7 +317,7 @@ async function catchCard() {
         if (!data.ok) {
             showMessage(
                 "❌ " +
-                (data.error || "Wrong card name.")
+                (data.error || "Type catch to catch this card.")
             );
 
             if (input) {
