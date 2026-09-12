@@ -1114,6 +1114,35 @@ body.modal-open {
 }
 
 /* -------------------------
+   Drop Card Arrival
+   ------------------------- */
+
+.drop-card-arrival {
+    animation: dropCardArrival .55s cubic-bezier(.2,.8,.2,1) both;
+    transform-origin: center;
+}
+
+@keyframes dropCardArrival {
+    0% {
+        opacity: 0;
+        transform: translateY(18px) scale(.88);
+        filter: brightness(1.7);
+    }
+
+    55% {
+        opacity: 1;
+        transform: translateY(-4px) scale(1.02);
+        filter: brightness(1.15);
+    }
+
+    100% {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+        filter: brightness(1);
+    }
+}
+
+/* -------------------------
    Animations
    ------------------------- */
 
@@ -1692,58 +1721,72 @@ body.modal-open {
 }
 
 
-/* Premium Receipt Preview Modal */
-.receipt-modal {
-    position: fixed;
-    inset: 0;
-    z-index: 9999;
-    display: none;
-    align-items: center;
-    justify-content: center;
-}
 
-.receipt-modal.show {
+/* -----------------------------
+   Trade Form
+----------------------------- */
+
+.trade-form {
     display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 12px;
 }
 
-.receipt-modal-backdrop {
-    position: absolute;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.85);
+.trade-form label {
+    font-size: 13px;
+    font-weight: 600;
+    opacity: 0.9;
 }
 
-.receipt-modal-content {
-    position: relative;
-    z-index: 1;
-    width: min(92vw, 520px);
-    max-height: 90vh;
-    padding: 12px;
-    border-radius: 16px;
-    background: #111;
-    box-sizing: border-box;
-    overflow: auto;
-}
-
-.receipt-modal-image {
-    display: block;
+.trade-form input,
+.trade-form select {
     width: 100%;
-    height: auto;
-    max-height: 82vh;
-    object-fit: contain;
+    box-sizing: border-box;
+    padding: 10px 12px;
     border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.12);
+    background: rgba(255,255,255,0.05);
+    color: inherit;
+    outline: none;
 }
 
-.receipt-modal-close {
-    position: absolute;
-    top: 8px;
-    right: 8px;
-    z-index: 2;
-    width: 38px;
-    height: 38px;
-    border: 0;
-    border-radius: 50%;
-    background: rgba(0, 0, 0, 0.75);
-    color: #fff;
-    font-size: 20px;
-    cursor: pointer;
+.trade-form input:focus,
+.trade-form select:focus {
+    border-color: rgba(255,255,255,0.35);
+}
+
+.trade-form button {
+    width: 100%;
+    margin-top: 4px;
+}
+
+.trade-rarity-status,
+.trade-action-status {
+    min-height: 18px;
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+.trade-rarity-status {
+    opacity: 0.9;
+}
+
+.trade-rarity-status.error,
+.trade-action-status.error {
+    color: #ff6b6b;
+}
+
+.trade-action-status {
+    margin-top: 2px;
+}
+
+.trade-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.trade-actions button {
+    flex: 1;
 }

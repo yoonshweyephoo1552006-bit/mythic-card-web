@@ -513,6 +513,7 @@ async function loadMe() {
         const data = await apiFetch(API_BASE + "/api/me");
 
         const u = data.user || {};
+        window.currentUserId = Number(u.telegram_id || 0);
 
         const name =
             u.first_name ||

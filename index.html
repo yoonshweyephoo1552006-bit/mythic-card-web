@@ -11,6 +11,25 @@
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
 
     <link rel="stylesheet" href="./style.css">
+
+<style>
+.receipt-modal-content {
+    width: min(92vw, 520px);
+    max-height: 90vh;
+    overflow: auto;
+}
+
+.receipt-modal-image {
+    display: block;
+    width: 100%;
+    max-height: 72vh;
+    object-fit: contain;
+    margin: 14px auto 0;
+    border-radius: 16px;
+    background: rgba(0,0,0,.35);
+}
+</style>
+
 </head>
 
 <body>
@@ -45,7 +64,7 @@
                             type="text"
                             id="catch-input"
                             class="catch-input"
-                            placeholder="Type card name..."
+                            placeholder='Type "catch" to catch'
                             autocomplete="off"
                             autocapitalize="none"
                             spellcheck="false"
@@ -333,8 +352,63 @@
                     </div>
                 </div>
 
-                <div class="section-card">
+                <div class="section-card trade-section">
                     <h3>🔄 Trades</h3>
+
+                    <div class="trade-form">
+                        <label for="trade-target-user">
+                            Target Telegram User ID
+                        </label>
+
+                        <input
+                            id="trade-target-user"
+                            type="number"
+                            inputmode="numeric"
+                            min="1"
+                            placeholder="Enter user ID"
+                        >
+
+                        <label for="trade-offered-card">
+                            Your Card
+                        </label>
+
+                        <select id="trade-offered-card">
+                            <option value="">
+                                Select a card
+                            </option>
+                        </select>
+
+                        <label for="trade-requested-card">
+                            Card You Want
+                        </label>
+
+                        <select id="trade-requested-card">
+                            <option value="">
+                                Select a card
+                            </option>
+                        </select>
+
+                        <div
+                            id="trade-rarity-status"
+                            class="trade-rarity-status"
+                        ></div>
+
+                        <button
+                            type="button"
+                            id="trade-create-btn"
+                            class="primary-btn"
+                        >
+                            📤 SEND TRADE
+                        </button>
+
+                        <div
+                            id="trade-action-status"
+                            class="trade-action-status"
+                        ></div>
+                    </div>
+
+                    <div class="trade-divider"></div>
+
                     <div id="trades-list">
                         <div class="empty-mini">No trades yet.</div>
                     </div>
@@ -367,28 +441,15 @@
 
     </div>
 
-    <!-- Premium Receipt Preview Modal -->
-    <div id="receipt-modal" class="receipt-modal">
-        <div id="receipt-modal-backdrop" class="receipt-modal-backdrop"></div>
-
-        <div class="receipt-modal-content">
-            <button
-                type="button"
-                id="receipt-modal-close"
-                class="receipt-modal-close"
-                aria-label="Close"
-            >
-                ✕
-            </button>
-
-            <img
-                id="receipt-modal-image"
-                class="receipt-modal-image"
-                alt="Premium payment receipt"
-            >
+    <div id="receipt-modal" class="card-modal">
+        <div class="card-modal-backdrop" id="receipt-modal-backdrop"></div>
+        <div class="card-modal-content receipt-modal-content">
+            <button id="receipt-modal-close" class="card-modal-close">×</button>
+            <div class="modal-rarity">PREMIUM RECEIPT</div>
+            <img id="receipt-modal-image" class="receipt-modal-image" alt="Premium payment receipt">
         </div>
     </div>
 
-    <script src="./app.js?v=263d0bb"></script>
+    <script src="./app.js?v=8764480"></script>
 </body>
 </html>
